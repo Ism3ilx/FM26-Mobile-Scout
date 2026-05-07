@@ -1,92 +1,53 @@
 import streamlit as st
 import pandas as pd
-import re
 
-st.set_page_config(page_title="Ismaily SC - Global Scout", layout="wide")
-st.title("⚽ كشاف FM26: النسخة العالمية الشاملة")
+st.set_page_config(page_title="FM26 Hex Profiler", layout="wide")
+st.title("🔬 مختبر تفكيك بيانات اللاعبين")
+
+st.info("استخدم هذه الأداة لتحديد مواقع (العمر، الجنسية، المركز، والمهارات) بدقة.")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
+player_names = st.text_input("اكتب أسماء اللاعبين (افصل بينهم بفصلة , )", placeholder="Courtois, Valverde")
 
-if uploaded_file:
+if uploaded_file and player_names:
     data = uploaded_file.read()
+    names_to_search = [n.strip() for n in player_names.split(',')]
     
-    # 1. نمط بحث "وحشي" يصطاد أي شيء يشبه الاسم (بما في ذلك الحروف المزخرفة)
-    # هذا النمط يبحث عن حرف كبير يليه حروف صغيرة (بما في ذلك الحروف اللاتينية المزخرفة)
-    player_pattern = re.compile(b"([A-Z][a-z\x80-\xff]{2,15}(?:\s|-)[A-Z][a-z\x80-\xff]{2,15})")
-    
-    results = []
-    seen_names = set()
-    
-    for match in player_pattern.finditer(data):
-        raw_name = match.group(1)
+    for search_name in names_to_search:
+        st.subheader(f"📊 تحليل بيانات اللاعب: {search_name}")
         
-        # محاولة فك التشفير بأكثر من طريقة لدعم "مبابي وجولير"
-        name = ""
-        for encoding in ['utf-8', 'latin-1', 'cp1252']:
-            try:
-                name = raw_name.decode(encoding).strip()
-                break
-            except:
-                continue
+        # البحث عن الاسم بترميز Latin-1 لدعم الزخرفة
+        name_bytes = search_name.encode('latin-1')
+        offset = data.find(name_bytes)
         
-        if not name or name in seen_names or len(name) < 5:
-            continue
+        if offset != -1:
+            start_data = offset  # سنبدأ من أول حرف في الاسم ليكون المرجع ثابت (0)
+            # سحب 160 بايت شاملة الاسم وما بعده
+            chunk = list(data[start_offset : start_offset + 160])
             
-        start_offset = match.start()
-        
-        # قراءة بلوك البيانات (توسيع النطاق لضمان عدم ضياع أي لاعب)
-        if start_offset + 160 <= len(data):
-            record = list(data[start_offset : start_offset + 160])
+            # إنشاء جدول البيانات الخام
+            hex_data = []
+            for i, val in enumerate(chunk):
+                hex_data.append({
+                    "الموقع (Index)": i,
+                    "القيمة (Decimal)": val,
+                    "القيمة (Hex)": hex(val).upper().replace('0X', ''),
+                    "الوصف المحتمل": "بداية الاسم" if i == 0 else ""
+                })
             
-            # 2. البحث عن العمر (الخانة 110 من البداية هي المفتاح الذي وجدناه لكورتوا)
-            # سنبحث في نطاق (105-115) لاستخراج العمر بدقة
-            age_zone = record[105:118]
-            age_candidates = [x for x in age_zone if 16 <= x <= 43]
+            df_hex = pd.DataFrame(hex_data)
             
-            # 3. البحث عن القدرات (نطاق أوسع لاصطياد فالفيردي ومبابي)
-            ability_zone = record[50:110]
-            potentials = [x for x in ability_zone if 110 <= x <= 200]
-            
-            if age_candidates and len(potentials) >= 2:
-                potentials.sort(reverse=True)
-                pa = potentials[0]
-                ca = potentials[1]
-                age = age_candidates[0]
-                
-                # 4. فلتر "اللاعب الحقيقي" (Data Density)
-                # فحص عدد البايتات النشطة حول الاسم (اللاعب الحقيقي ملفه "مليء" بالبيانات)
-                data_density = len([x for x in record[40:140] if x != 0])
-                
-                if data_density > 28: # تقليل الرقم قليلاً لضمان ظهور كل اللاعبين
-                    results.append({
-                        "الاسم": name,
-                        "العمر": age,
-                        "CA": ca,
-                        "PA": pa,
-                        "النمو": pa - ca,
-                        "الحالة": "🌟 سوبر" if pa > 170 else "✅ محترف"
-                    })
-                    seen_names.add(name)
+            # عرض الجدول مع تلوين القيم التي تشبه المهارات (1-20) أو القدرات (100-200)
+            def highlight_vals(row):
+                val = row['القيمة (Decimal)']
+                if 100 <= val <= 200:
+                    return ['background-color: #d4edda'] * len(row) # أخضر للقدرات
+                elif 1 <= val <= 20:
+                    return ['background-color: #fff3cd'] * len(row) # أصفر للمهارات
+                return [''] * len(row)
 
-    if results:
-        df = pd.DataFrame(results)
-        df = df.sort_values(by="PA", ascending=False)
-        
-        # واجهة الفلترة
-        st.success(f"✅ تم العثور على {len(df)} لاعب (تم دعم الأسماء المزخرفة)")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            search = st.text_input("🔍 ابحث عن لاعب (Mbappe, Guler, Ismaily...):")
-        with c2:
-            min_pa = st.number_input("الحد الأدنى للـ PA:", 100, 200, 120)
-            
-        final_df = df[df['PA'] >= min_pa]
-        if search:
-            final_df = final_df[final_df['الاسم'].str.contains(search, case=False, na=False)]
-            
-        st.dataframe(final_df, use_container_width=True)
-    else:
-        st.error("لم يتم العثور على لاعبين. جرب رفع ملف آخر.")
+            st.dataframe(df_hex.style.apply(highlight_vals, axis=1), height=500)
+            st.write("---")
+        else:
+            st.error(f"❌ لم يتم العثور على {search_name} في الملف. تأكد من كتابة الاسم كما يظهر في اللعبة.")
 
-# تم حذف البلالين نهائياً
