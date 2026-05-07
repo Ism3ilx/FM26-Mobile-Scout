@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Clean Scout", layout="wide")
-st.title("⚽ كشاف FM26: نسخة اللاعبين الحقيقيين (بدون وهمي)")
+st.set_page_config(page_title="Ismaily SC Scout - Pro", layout="wide")
+st.title("⚽ كشاف FM26: النسخة الشاملة (بحث ذكي)")
 
-uploaded_file = st.file_uploader("ارفع ملف fm_save.dat أو .fms", type=["dat", "fms"])
+uploaded_file = st.file_uploader("ارفع ملف الحفظ الخاص بك", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # 1. فلترة الأسماء الحقيقية فقط
-    # سنبحث عن الأسماء التي يتبعها مباشرة بيانات رقمية (وليس بايتات فارغة)
+    # نمط البحث عن الأسماء (اللاعبين)
     player_pattern = re.compile(b"([A-Z][a-z]{2,15}\s[A-Z][a-z]{2,15})")
     
     results = []
@@ -21,51 +20,63 @@ if uploaded_file:
         name = match.group(1).decode('utf-8', errors='ignore')
         offset = match.end()
         
-        # قراءة قطعة البيانات خلف الاسم مباشرة
-        chunk = data[offset : offset + 60]
+        # قراءة 100 بايت (نطاق أوسع للبحث)
+        chunk = list(data[offset : offset + 100])
         
-        # ميزة الفلترة: اللاعب الحقيقي بياناته "مزدحمة"
-        # إذا وجدنا أكثر من 15 بايت قيمتها صفر في أول 40 بايت، فهذا اسم وهمي من القاموس
-        if chunk[:40].count(0) > 15:
-            continue
-            
-        # البحث عن CA و PA (يجب أن يكونا أرقاماً قوية ومختلفة)
-        stats = [x for x in chunk if 110 <= x <= 200]
+        # استخراج كل الأرقام المنطقية في هذا النطاق
+        # 1. البحث عن القدرات (أرقام بين 100 و 200)
+        abilities = [x for x in chunk if 100 <= x <= 200]
         
-        if len(stats) >= 2:
-            stats.sort(reverse=True)
-            pa = stats[0]
-            ca = stats[1]
-            
-            # محاولة جلب العمر بدقة أكبر (غالباً يكون في أول 10 بايتات بعد الاسم)
-            age_candidates = [x for x in chunk[:15] if 16 <= x <= 39]
-            age = age_candidates[0] if age_candidates else "مجهول"
-            
-            # منع التكرار والأسماء الغريبة
-            if name not in seen_names and pa > 125: # رفعنا الحد الأدنى لاستبعاد الضعفاء والوهميين
+        # 2. البحث عن العمر (أرقام بين 16 و 40)
+        # سنركز على أول 20 بايت بعد الاسم للعمر
+        age_options = [x for x in chunk[:20] if 16 <= x <= 40]
+        
+        if name not in seen_names:
+            if len(abilities) >= 2:
+                abilities.sort(reverse=True)
+                pa = abilities[0]
+                ca = abilities[1]
+                age = age_options[0] if age_options else "؟"
+                
+                # تصنيف اللاعب
+                status = "⭐ موهبة" if pa > 160 else "✅ لاعب أساسي"
+                
                 results.append({
                     "اللاعب": name,
                     "العمر": age,
-                    "القدرة الحالية (CA)": ca,
-                    "القدرة الكامنة (PA)": pa,
-                    "إمكانية التطور": pa - ca
+                    "CA": ca,
+                    "PA": pa,
+                    "التقييم": status
+                })
+                seen_names.add(name)
+            elif len(abilities) == 1: # إذا وجدنا PA فقط ولم نجد CA
+                results.append({
+                    "اللاعب": name,
+                    "العمر": age_options[0] if age_options else "؟",
+                    "CA": "غير محدد",
+                    "PA": abilities[0],
+                    "التقييم": "بيانات جزئية"
                 })
                 seen_names.add(name)
 
     if results:
         df = pd.DataFrame(results)
-        # ترتيب تلقائي للأفضل
-        df = df.sort_values(by="القدرة الكامنة (PA)", ascending=False)
         
-        st.success(f"✅ تم العثور على {len(df)} لاعب حقيقي.")
+        # فلتر لاستبعاد الأسماء التي تظهر بدون أي بيانات PA (الوهميين)
+        df = df[df['PA'] != "؟"]
         
-        # إضافة مربع بحث للوصول للاعبي الإسماعيلي بسرعة
-        search_name = st.text_input("ابحث عن لاعب محدد:")
-        if search_name:
-            df = df[df['اللاعب'].str.contains(search_name, case=False)]
+        # ترتيب حسب القوة
+        df = df.sort_values(by="PA", ascending=False)
+        
+        st.success(f"✅ تم العثور على {len(df)} كيان. استخدم البحث للعثور على لاعبيك.")
+        
+        # مربع البحث مهم جداً هنا
+        search_box = st.text_input("ابحث عن لاعب (مثلاً: اكتب اسم لاعب من الإسماعيلي):")
+        if search_box:
+            df = df[df['اللاعب'].str.contains(search_box, case=False)]
             
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("لم يتم العثور على لاعبين حقيقيين بمعايير قوية. تأكد من أن الملف هو Save Game.")
+        st.error("لم نتمكن من الربط. الملف قد يكون بنظام تشفير مختلف.")
 
-    # تم حذف سطر البلالين (st.balloons) بناءً على طلبك
+# ملاحظة: تم حذف st.balloons بناءً على طلبك السابق
