@@ -2,77 +2,91 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC Scout - International Edition", layout="wide")
-st.title("⚽ كشاف FM26: نسخة النجوم العالميين (مبابي وجولير)")
+st.set_page_config(page_title="Ismaily SC - Global Scout", layout="wide")
+st.title("⚽ كشاف FM26: النسخة العالمية الشاملة")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # 1. تحديث نمط البحث ليشمل الحروف المزخرفة واللاتينية (\x80-\xff)
-    # هذا النمط سيتمكن من قراءة Mbappé و Güler وأي اسم يحتوي على علامات
-    player_pattern = re.compile(b"([A-Z][a-z\x80-\xff]{1,15}(?:\s|-)[A-Z][a-z\x80-\xff]{1,15}(?:\s[A-Z][a-z\x80-\xff]{1,15})?)")
+    # 1. نمط بحث "وحشي" يصطاد أي شيء يشبه الاسم (بما في ذلك الحروف المزخرفة)
+    # هذا النمط يبحث عن حرف كبير يليه حروف صغيرة (بما في ذلك الحروف اللاتينية المزخرفة)
+    player_pattern = re.compile(b"([A-Z][a-z\x80-\xff]{2,15}(?:\s|-)[A-Z][a-z\x80-\xff]{2,15})")
     
     results = []
     seen_names = set()
     
     for match in player_pattern.finditer(data):
-        try:
-            # محاولة فك التشفير باستخدام 'latin-1' لدعم الحروف المزخرفة بشكل صحيح
-            name = match.group(1).decode('latin-1').strip()
-        except:
+        raw_name = match.group(1)
+        
+        # محاولة فك التشفير بأكثر من طريقة لدعم "مبابي وجولير"
+        name = ""
+        for encoding in ['utf-8', 'latin-1', 'cp1252']:
+            try:
+                name = raw_name.decode(encoding).strip()
+                break
+            except:
+                continue
+        
+        if not name or name in seen_names or len(name) < 5:
             continue
             
         start_offset = match.start()
         
-        if name in seen_names or len(name) < 5:
-            continue
+        # قراءة بلوك البيانات (توسيع النطاق لضمان عدم ضياع أي لاعب)
+        if start_offset + 160 <= len(data):
+            record = list(data[start_offset : start_offset + 160])
             
-        if start_offset + 150 <= len(data):
-            record = list(data[start_offset : start_offset + 150])
+            # 2. البحث عن العمر (الخانة 110 من البداية هي المفتاح الذي وجدناه لكورتوا)
+            # سنبحث في نطاق (105-115) لاستخراج العمر بدقة
+            age_zone = record[105:118]
+            age_candidates = [x for x in age_zone if 16 <= x <= 43]
             
-            # 2. البحث المرن عن العمر (بناءً على إزاحة كورتوا 94 من النهاية)
-            # سنبحث في نطاق أوسع قليلاً لضمان عدم ضياع أي لاعب
-            age_window = record[80:135]
-            age_candidates = [x for x in age_window if 16 <= x <= 42]
+            # 3. البحث عن القدرات (نطاق أوسع لاصطياد فالفيردي ومبابي)
+            ability_zone = record[50:110]
+            potentials = [x for x in ability_zone if 110 <= x <= 200]
             
-            # 3. البحث عن القدرات (CA/PA)
-            ability_window = record[40:115]
-            potential_candidates = [x for x in ability_window if 110 <= x <= 200]
-            
-            if age_candidates and len(potential_candidates) >= 2:
-                potential_candidates.sort(reverse=True)
-                pa = potential_candidates[0]
-                ca = potential_candidates[1]
+            if age_candidates and len(potentials) >= 2:
+                potentials.sort(reverse=True)
+                pa = potentials[0]
+                ca = potentials[1]
                 age = age_candidates[0]
                 
-                # 4. تخفيف شرط "كثافة البيانات" لاصطياد اللاعبين الشباب
-                # اللاعب الصغير قد لا يملك مهارات كثيرة مكتملة، لذا سنخفض الرقم لـ 25
-                non_zero_check = len([x for x in record[40:130] if x != 0])
+                # 4. فلتر "اللاعب الحقيقي" (Data Density)
+                # فحص عدد البايتات النشطة حول الاسم (اللاعب الحقيقي ملفه "مليء" بالبيانات)
+                data_density = len([x for x in record[40:140] if x != 0])
                 
-                if non_zero_check > 25:
+                if data_density > 28: # تقليل الرقم قليلاً لضمان ظهور كل اللاعبين
                     results.append({
-                        "اللاعب": name,
+                        "الاسم": name,
                         "العمر": age,
-                        "القدرة الحالية (CA)": ca,
-                        "القدرة الكامنة (PA)": pa,
-                        "التطور المتوقع": pa - ca,
-                        "النوع": "🌟 نجم عالمي" if pa > 170 else "📈 موهبة"
+                        "CA": ca,
+                        "PA": pa,
+                        "النمو": pa - ca,
+                        "الحالة": "🌟 سوبر" if pa > 170 else "✅ محترف"
                     })
                     seen_names.add(name)
 
     if results:
         df = pd.DataFrame(results)
-        df = df.sort_values(by="القدرة الكامنة (PA)", ascending=False)
+        df = df.sort_values(by="PA", ascending=False)
         
-        st.success(f"✅ تم بنجاح! الرادار التقط {len(df)} لاعب، بما في ذلك الأسماء المزخرفة.")
+        # واجهة الفلترة
+        st.success(f"✅ تم العثور على {len(df)} لاعب (تم دعم الأسماء المزخرفة)")
         
-        # خيارات البحث والفلترة
-        search = st.text_input("🔍 ابحث عن اسم (مثلاً: Mbappé أو Güler أو Ismaily):")
-        if search:
-            df = df[df['اللاعب'].str.contains(search, case=False, na=False)]
+        c1, c2 = st.columns(2)
+        with c1:
+            search = st.text_input("🔍 ابحث عن لاعب (Mbappe, Guler, Ismaily...):")
+        with c2:
+            min_pa = st.number_input("الحد الأدنى للـ PA:", 100, 200, 120)
             
-        st.dataframe(df, use_container_width=True)
+        final_df = df[df['PA'] >= min_pa]
+        if search:
+            final_df = final_df[final_df['الاسم'].str.contains(search, case=False, na=False)]
+            
+        st.dataframe(final_df, use_container_width=True)
     else:
-        st.error("لم يتم العثور على بيانات. تأكد من أن الملف هو ملف حفظ وليس ملفاً آخر.")
+        st.error("لم يتم العثور على لاعبين. جرب رفع ملف آخر.")
+
+# تم حذف البلالين نهائياً
