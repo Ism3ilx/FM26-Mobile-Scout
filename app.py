@@ -7,7 +7,7 @@ st.set_page_config(page_title="Ismaily SC Scout", page_icon="⚽")
 st.title("🔍 كشاف FM26 Mobile الذكي")
 st.markdown("---")
 
-uploaded_file = st.file_uploader("ارفع ملف fm_save.dat", type="dat")
+uploaded_file = st.file_uploader("ارفع ملف fm_save.dat", type=["dat", "fms"]
 
 if uploaded_file:
     data = uploaded_file.read()
