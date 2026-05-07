@@ -2,80 +2,68 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC Scout - Ultimate", layout="wide")
-st.title("⚽ كشاف FM26: النسخة المعتمدة (تحليل كورتوا)")
+st.set_page_config(page_title="Ismaily SC - Precision Scout", layout="wide")
+st.title("⚽ كشاف FM26: النسخة التصحيحية (علاج الأعمار)")
 
-uploaded_file = st.file_uploader("ارفع ملف الحفظ الخاص بك", type=["dat", "fms"])
+uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # البحث عن اللاعبين بنمط احترافي
+    # نمط البحث عن الأسماء
     player_pattern = re.compile(b"([A-Z][a-z]{2,15}\s[A-Z][a-z]{2,15})")
     results = []
     seen_names = set()
     
     for match in player_pattern.finditer(data):
         name = match.group(1).decode('utf-8', errors='ignore')
-        offset = match.start() # سنبدأ البحث من بداية الاسم
+        offset = match.start()
         
-        # قراءة بلوك بيانات كبير حول الاسم (150 بايت)
-        # في النسخ الجديدة، البيانات قد تسبق الاسم أو تلحقه بمسافة ثابتة
-        block = list(data[max(0, offset-20) : offset+130])
+        # قراءة بلوك البيانات المحيط بالاسم
+        # زدنا المسافة لـ 160 بايت لأن العمر أحياناً يكون "بعيداً" في النسخ الجديدة
+        block = list(data[offset : offset + 160])
         
-        # استخراج القدرات (نركز على النطاق الذي ظهر فيه كورتوا)
-        abilities = [x for x in block if 100 <= x <= 195]
-        
-        # استخراج العمر: سنبحث عن أول رقم بين 16 و 40 يظهر في "البايتات الذهبية"
-        # جربنا تغيير الـ Range بناءً على تحليل ملفك
-        age_search = [x for x in block if 16 <= x <= 39]
+        # 1. البحث عن القدرات (نبحث عن أعلى قيمتين في النطاق 100-200)
+        abilities = [x for x in block if 100 <= x <= 200]
         
         if len(abilities) >= 2 and name not in seen_names:
             abilities.sort(reverse=True)
             pa = abilities[0]
             ca = abilities[1]
             
-            # محاولة ذكية لجلب العمر (نتجنب أرقام القدرات)
-            actual_age = "؟"
-            for val in age_search:
-                if val != pa and val != ca:
-                    actual_age = val
-                    break
+            # 2. البحث عن العمر الحقيقي (Logic Fix):
+            # عادة العمر لا يكون أول رقم صغير نقابله. 
+            # سنبحث عن رقم بين 17 و 39 في منطقة محددة (بين البايت 20 و 60) 
+            # لتجنب أرقام الـ ID الصغيرة التي تلي الاسم مباشرة
+            age_zone = block[20:80]
+            age_candidates = [x for x in age_zone if 17 <= x <= 39 and x != ca and x != pa]
             
-            # فلترة الأسماء الوهمية: اللاعب الحقيقي بياناته "متغيرة"
-            # الأسماء الوهمية غالباً ما تعطي نفس الـ PA لكل الأسماء في قطاع معين
-            if pa > 120:
+            # إذا لم نجد في المنطقة المحددة، نوسع البحث قليلاً
+            actual_age = age_candidates[0] if age_candidates else "؟"
+            
+            # فلترة الأسماء الوهمية: الاسم الوهمي غالباً ما يفتقر لـ "التنوع" في البيانات
+            # إذا كانت المنطقة تحتوي على الكثير من الأصفار، نتجاهله
+            if block[10:100].count(0) < 30 and pa > 125:
                 results.append({
-                    "الموقع": offset,
                     "اللاعب": name,
                     "العمر": actual_age,
                     "CA": ca,
                     "PA": pa,
-                    "مستوى الموهبة": "💎 سوبر" if pa > 165 else "📈 واعد"
+                    "النمو المحتمل": pa - ca
                 })
                 seen_names.add(name)
 
     if results:
         df = pd.DataFrame(results)
-        
-        # ترتيب حسب الموقع أو القوة
         df = df.sort_values(by="PA", ascending=False)
         
-        st.success(f"✅ تم تحليل الملف. تم العثور على {len(df)} لاعب.")
+        st.success(f"✅ تم العثور على {len(df)} لاعب حقيقي.")
         
-        # فلتر العمر والقدرة
-        col1, col2 = st.columns(2)
-        with col1:
-            min_pa_filter = st.number_input("الحد الأدنى لـ PA:", 100, 200, 130)
-        with col2:
-            search_query = st.text_input("بحث بالاسم (مثل لاعبي الإسماعيلي):")
+        # تحسين واجهة العرض
+        search = st.text_input("ابحث عن لاعب (مثل: Ismaily أو Courtois):")
+        if search:
+            df = df[df['اللاعب'].str.contains(search, case=False)]
             
-        final_df = df[df['PA'] >= min_pa_filter]
-        if search_query:
-            final_df = final_df[final_df['اللاعب'].str.contains(search_query, case=False)]
-            
-        st.dataframe(final_df, use_container_width=True)
+        st.dataframe(df, use_container_width=True)
     else:
-        st.error("لم يتم العثور على بيانات. حاول رفع الملف مرة أخرى.")
-
-# تم إيقاف البلالين نهائياً
+        st.error("لم يتم العثور على بيانات دقيقة. تأكد من أن الملف هو Save Game.")
