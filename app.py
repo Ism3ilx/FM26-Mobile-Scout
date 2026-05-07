@@ -2,67 +2,63 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC Scout - Final Boss", layout="wide")
-st.title("⚽ كشاف FM26: النسخة المعتمدة نهائياً")
+st.set_page_config(page_title="Ismaily SC Scout - Final Fix", layout="wide")
+st.title("⚽ كشاف FM26: النسخة الديناميكية (حل مشكلة طول الاسم)")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # البحث عن الأسماء (بداية السجل)
+    # نمط البحث عن الأسماء
     player_pattern = re.compile(b"([A-Z][a-z]{2,15}\s[A-Z][a-z]{2,15})")
     results = []
     seen_names = set()
     
     for match in player_pattern.finditer(data):
         name = match.group(1).decode('utf-8', errors='ignore')
-        start_offset = match.start() # نعتمد على بداية الاسم كمرجع ثابت
+        end_offset = match.end() # القياس يبدأ من نهاية الاسم وليس بدايته
         
-        # قراءة بلوك بيانات كبير من بداية الاسم (200 بايت) لضمان شمول كل البيانات
-        if start_offset + 200 <= len(data):
-            record = list(data[start_offset : start_offset + 200])
-            
-            # 1. استخراج العمر (بناءً على عملية تشريح كورتوا: البداية + 110 بايت تقريباً)
-            # سنبحث في نطاق صغير حول 110 لضمان الدقة لكل اللاعبين
-            age_window = record[105:115]
-            age_candidates = [x for x in age_window if 16 <= x <= 42]
+        # التأكد من وجود مساحة كافية للقراءة بعد الاسم
+        if end_offset + 120 <= len(data):
+            # 1. جلب العمر من الإزاحة 94 (الثابتة من نهاية أي اسم)
+            # سنأخذ نافذة صغيرة (93-95) لضمان الدقة المطلقة
+            age_candidates = [data[end_offset + i] for i in range(93, 96) if 16 <= data[end_offset + i] <= 42]
             actual_age = age_candidates[0] if age_candidates else "؟"
             
-            # 2. استخراج القدرات (CA/PA)
-            # في ملفك، القدرات تقع عادة بين البايت 60 و 100 من بداية الاسم
-            ability_window = record[60:105]
-            abilities = [x for x in ability_window if 100 <= x <= 200]
+            # 2. جلب القدرات (CA/PA) 
+            # بناءً على تحليل كورتوا، القدرات تكون بين البايت 45 و 85 من نهاية الاسم
+            ability_chunk = list(data[end_offset + 40 : end_offset + 90])
+            abilities = [x for x in ability_chunk if 100 <= x <= 200]
             
             if len(abilities) >= 2 and name not in seen_names:
                 abilities.sort(reverse=True)
                 pa = abilities[0]
                 ca = abilities[1]
                 
-                # 3. الفلترة القوية (استبعاد الوهميين)
-                # اللاعب الحقيقي لديه "عمر" منطقي في الخانة المحددة
+                # 3. الفلترة النهائية (استبعاد الأسماء الوهمية)
+                # شرط وجود عمر حقيقي في الإزاحة 94 هو الفلتر الأقوى
                 if actual_age != "؟" and pa >= 120:
                     results.append({
                         "اللاعب": name,
                         "العمر": actual_age,
-                        "CA": ca,
-                        "PA": pa,
-                        "الفرق": pa - ca,
-                        "الوضع": "💎 واعد" if pa > 160 and int(actual_age) < 22 else "✅ متاح"
+                        "القدرة الحالية (CA)": ca,
+                        "القدرة الكامنة (PA)": pa,
+                        "حالة الموهبة": "⭐ سوبر" if pa > 165 else "✅ واعد"
                     })
                     seen_names.add(name)
 
     if results:
         df = pd.DataFrame(results)
-        df = df.sort_values(by="PA", ascending=False)
+        df = df.sort_values(by="القدرة الكامنة (PA)", ascending=False)
         
-        st.success(f"✅ تم بنجاح! العثور على {len(df)} لاعب حقيقي.")
+        st.success(f"✅ مبروك! تم ضبط الرادار لكل اللاعبين. تم العثور على {len(df)} لاعب.")
         
-        # فلتر البحث (للبحث عن لاعبي الإسماعيلي مثلاً)
-        search = st.text_input("ابحث عن لاعب أو فريق:")
+        # محرك البحث للوصول للاعبي الإسماعيلي أو أي نجم آخر
+        search = st.text_input("ابحث عن لاعب محدد:")
         if search:
             df = df[df['اللاعب'].str.contains(search, case=False)]
             
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("لم يتم العثور على لاعبين. جرب رفع الملف مرة أخرى.")
+        st.warning("لم يتم العثور على لاعبين. تأكد من رفع الملف الصحيح.")
