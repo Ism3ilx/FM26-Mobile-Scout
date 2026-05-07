@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC Scout - Elite Edition", layout="wide")
-st.title("⚽ كشاف FM26: النسخة الاحترافية الشاملة")
+st.set_page_config(page_title="Ismaily SC - Ultimate Scout", layout="wide")
+st.title("⚽ كشاف FM26: النسخة الشاملة (البحث الذكي)")
 
-uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
+uploaded_file = st.file_uploader("ارفع ملف الحفظ الخاص بك", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # 1. تحسين نمط البحث عن الأسماء ليشمل الأسماء المركبة (مثل Alexander-Arnold) والأسماء القصيرة
-    # النمط الجديد أكثر مرونة لالتقاط كل اللاعبين الحقيقيين
+    # 1. نمط بحث شامل جداً (يصطاد فالفيردي والأسماء المركبة والقصيرة)
     player_pattern = re.compile(b"([A-Z][a-z]{1,15}(?:\s|-)[A-Z][a-z]{1,15}(?:\s[A-Z][a-z]{1,15})?)")
     
     results = []
@@ -19,75 +18,56 @@ if uploaded_file:
     
     for match in player_pattern.finditer(data):
         name = match.group(1).decode('utf-8', errors='ignore').strip()
-        end_offset = match.end()
+        start_offset = match.start()
         
-        # التأكد من وجود مساحة كافية للبيانات (نحتاج 120 بايت بعد الاسم)
-        if end_offset + 120 <= len(data):
-            # 2. جلب العمر من الإزاحة الذهبية 94 (التي ضبطت أعمار كورتوا وغيره)
-            age = data[end_offset + 94]
+        if name in seen_names:
+            continue
             
-            # 3. الفلترة الصارمة لحذف اللاعبين الوهميين:
-            # - الشرط الأول: العمر يجب أن يكون منطقياً (بين 15 و 45).
-            # - الشرط الثاني: فحص "كثافة البيانات" (اللاعب الحقيقي لديه مهارات كثيرة غير صفرية).
-            # - الشرط الثالث: القدرة الكامنة PA يجب أن تكون معقولة.
+        # 2. بدلاً من رقم ثابت، سنأخذ "بلوك" بيانات (150 بايت) من بداية الاسم
+        if start_offset + 150 <= len(data):
+            record = list(data[start_offset : start_offset + 150])
             
-            # فحص كثافة البيانات في الـ 100 بايت التالية للاسم
-            chunk = list(data[end_offset : end_offset + 110])
-            non_zero_stats = len([x for x in chunk if x != 0])
+            # 3. البحث عن "بصمة اللاعب الحقيقي" داخل البلوك:
+            # نبحث عن (عمر منطقي) و (PA قوي) و (CA قوي) في أي مكان داخل البلوك
             
-            if 15 <= age <= 45 and non_zero_stats > 35:
-                # استخراج القدرات (CA/PA) من النطاق المكتشف سابقاً
-                ability_chunk = chunk[40:100]
-                abilities = [x for x in ability_chunk if 100 <= x <= 200]
+            # البحث عن العمر (نبحث في النطاق من 80 إلى 125 بايت بعد البداية)
+            age_candidates = [x for x in record[80:130] if 16 <= x <= 42]
+            
+            # البحث عن القدرات (نبحث في النطاق من 40 إلى 110 بايت بعد البداية)
+            potential_candidates = [x for x in record[40:110] if 115 <= x <= 198]
+            
+            if age_candidates and len(potential_candidates) >= 2:
+                # ترتيب القدرات لأخذ الأعلى (PA ثم CA)
+                potential_candidates.sort(reverse=True)
+                pa = potential_candidates[0]
+                ca = potential_candidates[1]
+                age = age_candidates[0]
                 
-                if len(abilities) >= 2 and name not in seen_names:
-                    abilities.sort(reverse=True)
-                    pa = abilities[0]
-                    ca = abilities[1]
-                    
-                    if pa >= 120:
-                        # تصنيف إضافي لاكتشاف المواهب (Wonderkids)
-                        category = "⭐ موهبة خارقة" if pa > 165 and age < 21 else "✅ لاعب محترف"
-                        if age > 32: category = "👴 خبرة"
-
-                        results.append({
-                            "اللاعب": name,
-                            "العمر": age,
-                            "القدرة الحالية (CA)": ca,
-                            "القدرة الكامنة (PA)": pa,
-                            "إمكانية التطور": pa - ca,
-                            "التصنيف": category
-                        })
-                        seen_names.add(name)
+                # فلترة إضافية: اللاعب الحقيقي بياناته "نشطة" (غير صفرية)
+                non_zero_check = len([x for x in record[40:130] if x != 0])
+                
+                if non_zero_check > 30: # هذا الرقم يميز اللاعب الحقيقي عن "بقايا النصوص"
+                    results.append({
+                        "اللاعب": name,
+                        "العمر": age,
+                        "القدرة الحالية (CA)": ca,
+                        "القدرة الكامنة (PA)": pa,
+                        "إمكانية التطور": pa - ca,
+                        "الجودة": "💎 عالمي" if pa > 165 else "✅ ممتاز"
+                    })
+                    seen_names.add(name)
 
     if results:
         df = pd.DataFrame(results)
+        df = df.sort_values(by="القدرة الكامنة (PA)", ascending=False)
         
-        # واجهة عرض متطورة
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            search = st.text_input("🔍 ابحث عن اسم (لاعب/نادي):")
-        with col2:
-            min_pa = st.slider("الحد الأدنى للقدرة الكامنة (PA):", 120, 200, 130)
-        with col3:
-            sort_by = st.selectbox("ترتيب حسب:", ["PA", "إمكانية التطور", "العمر"])
-
-        # تطبيق الفلاتر
-        filtered_df = df[df['القدرة الكامنة (PA)'] >= min_pa]
-        if search:
-            filtered_df = filtered_df[filtered_df['اللاعب'].str.contains(search, case=False)]
-            
-        sort_map = {"PA": "القدرة الكامنة (PA)", "إمكانية التطور": "إمكانية التطور", "العمر": "العمر"}
-        filtered_df = filtered_df.sort_values(by=sort_map[sort_by], ascending=(sort_by == "العمر"))
-
-        st.success(f"✅ تم العثور على {len(filtered_df)} لاعب حقيقي بنجاح.")
-        st.dataframe(filtered_df, use_container_width=True)
+        st.success(f"✅ تم العثور على {len(df)} لاعب حقيقي بنجاح!")
         
-        # ميزة إضافية: ملخص لأفضل المواهب المتاحة
-        if not filtered_df.empty:
-            st.subheader("💡 كشاف الدراويش ينصح بـ:")
-            top_wonderkid = filtered_df.sort_values(by="القدرة الكامنة (PA)", ascending=False).iloc[0]
-            st.info(f"أفضل لاعب متاح حالياً هو **{top_wonderkid['اللاعب']}** (PA: {top_wonderkid['القدرة الكامنة (PA)']})")
+        # مربع بحث احترافي
+        search_query = st.text_input("🔍 ابحث عن فالفيردي أو أي لاعب آخر:")
+        if search_query:
+            df = df[df['اللاعب'].str.contains(search_query, case=False)]
             
+        st.dataframe(df, use_container_width=True)
     else:
-        st.warning("لم يتم العثور على لاعبين. تأكد من أن الملف هو Save Game نشط.")
+        st.error("لم يتم العثور على لاعبين. تأكد من أن الملف هو Save Game.")
