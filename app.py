@@ -5,84 +5,65 @@ import re
 # إعدادات الصفحة
 st.set_page_config(page_title="Ismaily SC - Ultimate Scout", layout="wide", page_icon="⚽")
 
-# تنسيق واجهة المستخدم
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    .stDataFrame { border: 1px solid #ffcc00; }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🏹 رادار الإسماعيلي - النسخة الاحترافية النهائية")
-st.subheader("كشاف FM26 Mobile | مفكك الشفرات والمجموعات")
+st.title("🏹 رادار الإسماعيلي - النسخة المرنة")
+st.subheader("إصدار استعادة اللاعبين المفقودين")
 
 # رفع الملف
-uploaded_file = st.file_uploader("ارفع ملف الحفظ لدراسته (صيغة .dat)", type=["dat", "fms"])
+uploaded_file = st.file_uploader("ارفع ملف الحفظ (.dat)", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
-    # نمط البحث عن الأسماء (الاسم الأول والثاني)
-    # يدعم الحروف اللاتينية المزخرفة والمسافات
-    player_pattern = re.compile(b"([A-Z][a-zA-Z\x80-\xff]{1,15}\s[A-Z][a-zA-Z\x80-\xff]{1,15})")
+    # نمط بحث مطور صيد الأسماء (داني كارفخال أو DANI CARVAJAL)
+    # يبحث عن كلمة تبدأ بحرف كبير تليها كلمة أخرى تبدأ بحرف كبير
+    player_pattern = re.compile(b"([A-Z][a-zA-Z\x80-\xff]{1,15}\s[A-Z][a-zA-Z\x80-\xff]{1,15})|([A-Z]{3,15}\s[A-Z]{3,15})")
     
     results = []
     seen_offsets = set()
 
-    # مسح الملف بالكامل
     for match in player_pattern.finditer(data):
         start_offset = match.start()
         try:
-            name = match.group(1).decode('latin-1').strip()
+            # محاولة فك التشفير بلغات مختلفة لضمان القراءة
+            name = match.group(0).decode('latin-1').strip()
         except: continue
 
-        # تخطي الأسماء المكررة والقصيرة
-        if len(name) < 8 or start_offset in seen_offsets: continue
+        if len(name) < 5 or start_offset in seen_offsets: continue
 
-        # سحب سجل بيانات اللاعب (250 بايت)
+        # سحب بلوك البيانات
         if start_offset + 250 <= len(data):
             record = list(data[start_offset : start_offset + 250])
             
-            # 1. تحديد "نقطة الارتكاز" (موقع العمر)
+            # البحث عن العمر (نقطة الارتكاز)
             age_idx = -1
-            for i in range(80, 145):
+            for i in range(50, 150): # توسيع نطاق البحث بعد الاسم
                 val = record[i]
                 if 16 <= val <= 43:
-                    # فحص "بصمة السرعة" للتأكد من الموقع (+29 هي القاعدة الذهبية)
-                    if i + 31 < len(record):
-                        p_check = record[i + 29]
-                        if 5 <= p_check <= 20: # المهارات البدنية غالباً لا تقل عن 5 للنجوم
-                            age_idx = i
-                            break
+                    # بمجرد إيجاد رقم يصلح عمر، نعتبره نقطة الارتكاز
+                    age_idx = i
+                    break
             
             if age_idx != -1:
                 age = record[age_idx]
                 
-                # 2. تحديد المركز (حارس مرمى أم لاعب ميدان)
-                # بناءً على كورتوا: رد الفعل (Reflexes) في العمر + 5
+                # فحص المركز (حارس أم لا) - تعتمد على مهارة رد الفعل
                 is_gk = True if record[age_idx + 5] > 10 else False
                 
-                # 3. استخراج الطاقات بناءً على "الأرقام الذهبية"
-                pace = record[age_idx + 29] # ثابتة للجميع
+                # تطبيق الأرقام الذهبية
+                pace = record[age_idx + 29]
                 
                 if is_gk:
-                    # إزاحة الحراس (كورتوا: التحمل في العمر + 36)
                     stamina = record[age_idx + 36]
                     strength = record[age_idx + 31]
                     pos = "GK 🧤"
                 else:
-                    # إزاحة اللاعبين (كارفخال وفالفيردي: التحمل في العمر + 30)
                     stamina = record[age_idx + 30]
                     strength = record[age_idx + 31]
                     pos = "Field 🏃"
                 
-                # 4. استخراج القدرات CA/PA
-                # استخدام None بدلاً من النصوص لمنع أخطاء الترتيب (Sorting)
-                pa_val = record[age_idx - 11]
-                ca_val = record[age_idx - 13]
-                
-                pa = pa_val if 100 <= pa_val <= 200 else None
-                ca = ca_val if 100 <= ca_val <= 200 else None
+                # استخراج القدرات
+                pa = record[age_idx - 11] if 100 <= record[age_idx - 11] <= 200 else None
+                ca = record[age_idx - 13] if 100 <= record[age_idx - 13] <= 200 else None
 
                 results.append({
                     "الاسم": name,
@@ -98,37 +79,25 @@ if uploaded_file:
 
     if results:
         df = pd.DataFrame(results).drop_duplicates(subset=['الاسم', 'العمر'])
-        
-        # تحويل الأعمدة لأرقام لضمان عمل الترتيب (Sorting)
         df['PA'] = pd.to_numeric(df['PA'], errors='coerce')
-        df['CA'] = pd.to_numeric(df['CA'], errors='coerce')
-
-        st.success(f"✅ تم تحليل الملف بنجاح! الرادار وجد {len(df)} لاعب حقيقي.")
         
-        # أدوات التحكم (البحث والفلترة)
+        # أدوات التحكم
         col1, col2 = st.columns([2, 1])
         with col1:
-            search_query = st.text_input("🔍 ابحث عن لاعب محدد:")
+            search_query = st.text_input("🔍 ابحث عن اسم اللاعب:")
         with col2:
-            min_pa = st.slider("الحد الأدنى للـ PA:", 100, 200, 130)
+            # جعلنا القيمة الافتراضية 0 لكي لا يختفي أحد
+            min_pa = st.slider("الحد الأدنى للـ PA:", 0, 200, 0)
 
-        # تطبيق الفلاتر
+        # التصفية
         final_df = df[df['PA'].fillna(0) >= min_pa]
         if search_query:
             final_df = final_df[final_df['الاسم'].str.contains(search_query, case=False)]
 
-        # عرض الجدول النهائي
-        # الترتيب حسب PA تنازلياً، والقيم الفارغة تظهر في الأسفل
         st.dataframe(
             final_df.sort_values(by="PA", ascending=False, na_position='last'), 
-            use_container_width=True,
-            height=600
+            use_container_width=True
         )
-        
-        # زر التحميل
-        csv = final_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل النتائج (CSV)", csv, "ismaily_scout_results.csv", "text/csv")
-
     else:
-        st.error("لم يتم العثور على أي لاعبين. تأكد من أن الملف هو Save Game بصيغة .dat")
-
+        st.error("⚠️ لم يتم العثور على لاعبين. جرب التأكد من ملف الحفظ.")
+            
