@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Precision Match", layout="wide")
-st.title("⚽ كشاف الإسماعيلي: نسخة الربط التكاملي")
+st.set_page_config(page_title="Ismaily SC - Precision Scout", layout="wide")
+st.title("⚽ كشاف الإسماعيلي: النسخة النهائية المصححة")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.dat)", type=["dat", "fms"])
 
 if uploaded_file:
     data = uploaded_file.read()
     
+    # نمط البحث عن الأسماء
     player_pattern = re.compile(b"([A-Z][a-zA-Z\x80-\xff]{1,15}\s[A-Z][a-zA-Z\x80-\xff]{1,15})")
     
     results = []
@@ -26,36 +27,37 @@ if uploaded_file:
         if start_offset + 300 <= len(data):
             record = list(data[start_offset : start_offset + 300])
             
-            # 1. البحث عن "بلوك المهارات" أولاً (لأننا تأكدنا من مكانه)
+            # 1. البحث عن "بلوك المهارات" (السرعة، التحمل، القوة)
             skill_idx = -1
             for j in range(100, 180):
                 if j + 3 < len(record):
-                    # إحنا بندور على 3 أرقام منطقية (السرعة، التحمل، القوة)
-                    # بناءً على تعديلك الأخير (الترحيل للأمام)
+                    # نطبق القاعدة التي ضبطت معك الطاقات (الترحيل للأمام)
                     if 5 <= record[j+1] <= 20 and 5 <= record[j+2] <= 20 and 5 <= record[j+3] <= 20:
                         skill_idx = j
                         break
             
             if skill_idx != -1:
-                # 2. استخراج الطاقات (المظبوطة بناءً على كلامك)
+                # 2. استخراج الطاقات الصحيحة
                 pace = record[skill_idx + 1]
                 stamina = record[skill_idx + 2]
                 strength = record[skill_idx + 3]
                 
-                # 3. استخراج العمر بناءً على مكانه من المهارات (الرجوع 29 خطوة من السرعة)
-                # السرعة موجودة في skill_idx + 1، إذن العمر في (skill_idx + 1 - 29)
+                # 3. تحديد مكان العمر بناءً على مكانه من السرعة (الرجوع 29 خطوة)
                 age_pos = (skill_idx + 1) - 29
                 
                 if 0 <= age_pos < len(record):
+                    # محاولة جلب العمر الحقيقي
                     age = record[age_pos]
                     
-                    # فحص إضافي: لو العمر طلع مش منطقي، جرب الخانة اللي جنبه (أحياناً بيكون فيه ترحيل بسيط)
+                    # فحص منطقية العمر (بين 16 و 43) وتصحيحه لو تطلب الأمر
                     if not (16 <= age <= 43):
                         if 16 <= record[age_pos + 1] <= 43: age = record[age_pos + 1]
                         elif 16 <= record[age_pos - 1] <= 43: age = record[age_pos - 1]
 
-                    # 4. استخراج PA (قبل العمر بـ 11 خانة)
-                    pa = record[age_pos - 11] if 100 <= record[age_idx - 11] <= 200 else None
+                    # 4. استخراج PA (قبل مكان العمر بـ 11 خانة)
+                    # تم تصحيح الخطأ هنا (استبدال age_idx بـ age_pos)
+                    pa = record[age_pos - 11] if 100 <= record[age_pos - 11] <= 200 else None
+                    ca = record[age_pos - 13] if 100 <= record[age_pos - 13] <= 200 else None
 
                     results.append({
                         "الاسم": name,
@@ -63,18 +65,22 @@ if uploaded_file:
                         "السرعة": pace,
                         "التحمل": stamina,
                         "القوة": strength,
-                        "PA": pa
+                        "PA": pa,
+                        "CA": ca
                     })
                     seen_offsets.add(start_offset)
 
     if results:
         df = pd.DataFrame(results).drop_duplicates(subset=['الاسم', 'العمر'])
         df['PA'] = pd.to_numeric(df['PA'], errors='coerce')
-        st.success(f"🎯 تم الربط! وجدنا {len(df)} لاعب بطاقات وعمر مظبوطين.")
         
-        search = st.text_input("🔍 ابحث عن لاعب للتأكد:")
+        st.success(f"🎯 الرادار يعمل بكفاءة! تم العثور على {len(df)} لاعب.")
+        
+        search = st.text_input("🔍 ابحث عن لاعب (مثل: Carvajal):")
         if search:
             df = df[df['الاسم'].str.contains(search, case=False)]
             
         st.dataframe(df.sort_values(by="PA", ascending=False, na_position='last'), use_container_width=True)
-                
+    else:
+        st.error("⚠️ لم يتم العثور على لاعبين. تأكد أن الملف هو Save Game فعلي.")
+
