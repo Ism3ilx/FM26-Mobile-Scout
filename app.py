@@ -2,37 +2,52 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Mega Scout", layout="wide")
-st.title("🏹 كشاف الإسماعيلي: الرادار الشامل (أرقام + أسماء)")
+st.set_page_config(page_title="Ismaily SC - Name Decryptor", layout="wide")
+st.title("🏹 رادار الدراويش: كاشف الأسماء المطور")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
+search_query = st.text_input("🔍 ابحث عن اسم لاعب تعرفه (مثلاً: Endrick) لمعايرة الرادار:")
 
 if uploaded_file:
     data = uploaded_file.read()
     raw_bytes = list(data)
-    results = []
     
-    # 1. البحث عن الطاقات (النمط اللي نجحنا فيه)
-    for i in range(1000, len(raw_bytes) - 50):
+    # ميزة البحث عن اسم محدد لمعرفة موقعه
+    if search_query:
+        # البحث بالنظام العادي والنظام المشفر (UTF-16)
+        query_bytes = search_query.encode('ascii', errors='ignore')
+        matches = [m.start() for m in re.finditer(query_bytes, data)]
+        if matches:
+            st.info(f"📍 وجدنا الاسم '{search_query}' في المواقع التالية: {matches}")
+        else:
+            st.warning("لم نجد هذا الاسم، حاول كتابة الاسم الأول فقط.")
+
+    results = []
+    # المسح لاستخراج البيانات
+    for i in range(1000, len(raw_bytes) - 100):
         pa = raw_bytes[i]
-        if 150 <= pa <= 200: # بنبحث عن المواهب العالية فقط
+        if 150 <= pa <= 200:
             age = raw_bytes[i+2]
             if 15 <= age <= 40:
                 pace = raw_bytes[i+6]
                 stamina = raw_bytes[i+7]
                 strength = raw_bytes[i+8]
                 
-                # التأكد إنها بيانات لاعب (المهارات بين 1 و 20)
                 if 5 <= pace <= 20 and 5 <= stamina <= 20:
-                    
-                    # 2. محاولة إيجاد اسم اللاعب (البحث عن نص قريب قبل الإزاحة)
+                    # محاولة استخراج الاسم بذكاء أكبر
                     player_name = "Unknown"
-                    # نبحث في الـ 300 بايت اللي قبل الـ PA عن أي نص انجليزي
-                    search_area = data[max(0, i-300):i]
-                    names = re.findall(b"[A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,15})?", search_area)
+                    # فحص الـ 400 بايت اللي قبل الطاقة
+                    search_area = data[max(0, i-400):i]
+                    
+                    # البحث عن نمط الأسماء (تبدأ بحرف كبير وبعدها حروف صغيرة)
+                    # جربنا الأنماط العادية، دلوقت هنجرب نشيل الأصفار (Null bytes)
+                    cleaned_area = search_area.replace(b'\x00', b'')
+                    names = re.findall(b"[A-Z][a-z]{2,15}", cleaned_area)
+                    
                     if names:
                         try:
-                            player_name = names[-1].decode('latin-1')
+                            # بناخد آخر اسم ظهر قبل الأرقام
+                            player_name = names[-1].decode('ascii')
                         except:
                             pass
 
@@ -43,22 +58,19 @@ if uploaded_file:
                         "السرعة": pace,
                         "التحمل": stamina,
                         "القوة": strength,
-                        "الموقع (ID)": i
+                        "ID": i
                     })
 
     if results:
-        df = pd.DataFrame(results).drop_duplicates(subset=['الموقع (ID)'])
-        # ترتيب حسب القوة (PA)
+        df = pd.DataFrame(results).drop_duplicates(subset=['ID'])
+        # تصفية الأسماء اللي طلعت أندية أو كلمات غير مفيدة
+        filter_list = ['Strasbourg', 'Juventus', 'Gent', 'Club', 'Team', 'Stadium']
+        df = df[~df['الاسم المتوقع'].isin(filter_list)]
+        
         top_df = df.sort_values(by="الـ PA", ascending=False)
-        
-        st.success(f"🎯 رادار الدراويش رصد {len(top_df)} موهبة!")
-        st.write("ملاحظة: إذا ظهر الاسم 'Unknown'، يمكنك البحث في اللعبة عن لاعب بنفس العمر والسرعة والـ PA.")
-        
+        st.success(f"🎯 تم رصد {len(top_df)} لاعب.")
         st.dataframe(top_df, use_container_width=True)
         
-        # تحميل الملف
         csv = top_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل قائمة المواهب", csv, "ismaily_scout_names.csv", "text/csv")
-    else:
-        st.error("⚠️ لم يتم العثور على بيانات. تأكد من أن الملف هو Save Game للنسخة الصحيحة.")
-                    
+        st.download_button("📥 تحميل التقرير", csv, "ismaily_names_fixed.csv", "text/csv")
+        
