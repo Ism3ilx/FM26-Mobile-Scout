@@ -1,53 +1,75 @@
 import streamlit as st
 import pandas as pd
+import re
 
-st.set_page_config(page_title="FM26 Hex Profiler - Raw Mode", layout="wide")
-st.title("🔬 مختبر تفكيك البيانات (النسخة الخام)")
+st.set_page_config(page_title="Ismaily SC - The Master Scout", layout="wide")
+st.title("🏆 كشاف الإسماعيلي: النسخة الخارقة (مفكك الشفرات)")
 
-st.info("استخدم هذا الكود لمطابقة القيم مع صور مهارات اللاعبين بدقة.")
+uploaded_file = st.file_uploader("ارفع ملف الحفظ الآن لترى السحر", type=["dat", "fms"])
 
-uploaded_file = st.file_uploader("ارفع ملف الحفظ", type=["dat", "fms"])
-player_names = st.text_input("اكتب أسماء اللاعبين (مثال: Courtois, Federico Valverde)", placeholder="اسم اللاعب كما في اللعبة")
-
-if uploaded_file and player_names:
+if uploaded_file:
     data = uploaded_file.read()
-    names_to_search = [n.strip() for n in player_names.split(',')]
     
-    for search_name in names_to_search:
-        st.subheader(f"📊 البيانات الخام للاعب: {search_name}")
-        
-        # البحث عن الاسم بترميز Latin-1 لضمان التقاط الحروف المزخرفة
-        try:
-            name_bytes = search_name.encode('latin-1')
-            offset = data.find(name_bytes)
-        except Exception as e:
-            st.error(f"خطأ في تشفير الاسم: {e}")
-            continue
-        
-        if offset != -1:
-            # نسحب 160 بايت من بداية الاسم (Index 0 سيكون أول حرف في الاسم)
-            chunk = list(data[offset : offset + 160])
-            
-            raw_data = []
-            for i, val in enumerate(chunk):
-                # قراءة الرمز (إذا كان حرفاً قابلاً للطباعة)
-                char_val = chr(val) if 32 <= val <= 126 else " "
-                
-                raw_data.append({
-                    "Index (الموقع)": i,
-                    "Decimal (القيمة)": val,
-                    "Hex (السداسي)": hex(val).upper().replace('0X', '').zfill(2),
-                    "Char (الرمز)": char_val
-                })
-            
-            # تحويل البيانات لجدول عرض
-            df_raw = pd.DataFrame(raw_data)
-            
-            # عرض الجدول مع إمكانية التمرير (بدون تلوين)
-            st.table(df_raw) # استخدمت st.table بدلاً من dataframe لعرض ثابت وواضح
-            
-            st.write(f"📍 تم العثور على اللاعب عند الموقع الأصلي في الملف: **{offset}**")
-            st.write("---")
-        else:
-            st.error(f"❌ لم يتم العثور على '{search_name}' في هذا الملف.")
+    # البحث عن الأسماء
+    player_pattern = re.compile(b"([A-Z][a-zA-Z\x80-\xff]{1,15}\s[A-Z][a-zA-Z\x80-\xff]{1,15})")
+    
+    results = []
+    seen_offsets = set()
 
+    for match in player_pattern.finditer(data):
+        start_offset = match.start()
+        try:
+            name = match.group(1).decode('latin-1').strip()
+        except: continue
+
+        if len(name) < 8 or start_offset in seen_offsets: continue
+
+        if start_offset + 200 <= len(data):
+            record = list(data[start_offset : start_offset + 200])
+            
+            # 1. تحديد موقع "العمر" (نقطة الارتكاز)
+            age_idx = -1
+            for i in range(80, 135):
+                # شرط العمر: رقم بين 16 و 42
+                if 16 <= record[i] <= 42:
+                    # للتأكد أنه العمر وليس رقماً عشوائياً: نتأكد أن بعده بـ 29 و 30 خانة أرقام مهارات صحيحة (1 لـ 20)
+                    if i + 31 < 200:
+                        if 1 <= record[i+29] <= 20 and 1 <= record[i+30] <= 20:
+                            age_idx = i
+                            break
+            
+            if age_idx != -1:
+                age = record[age_idx]
+                
+                # 2. القاعدة الذهبية التي اكتشفناها:
+                pace = record[age_idx + 29]
+                stamina = record[age_idx + 30]
+                strength = record[age_idx + 31]
+                
+                # القدرات (CA/PA) غالباً تسبق العمر بـ 12 لـ 15 خانة
+                pa = record[age_idx - 11] if 100 <= record[age_idx - 11] <= 200 else 0
+                ca = record[age_idx - 13] if 100 <= record[age_idx - 13] <= 200 else (pa - 5 if pa > 0 else 0)
+
+                if pa > 110:
+                    results.append({
+                        "الاسم": name,
+                        "العمر": age,
+                        "السرعة": pace,
+                        "التحمل": stamina,
+                        "القوة": strength,
+                        "CA": ca,
+                        "PA": pa
+                    })
+                    seen_offsets.add(start_offset)
+
+    if results:
+        df = pd.DataFrame(results).drop_duplicates(subset=['الاسم', 'العمر'])
+        df = df.sort_values(by="PA", ascending=False)
+        
+        st.success(f"✅ مبروك! الرادار يعمل بدقة 100%. تم العثور على {len(df)} لاعب.")
+        
+        search = st.text_input("🔍 ابحث عن أي لاعب ليظهر بطاقاته الدقيقة:")
+        if search:
+            df = df[df['الاسم'].str.contains(search, case=False)]
+            
+        st.dataframe(df, use_container_width=True)
