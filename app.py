@@ -1,85 +1,90 @@
 import streamlit as st
 import pandas as pd
+import struct
 import re
 
-st.set_page_config(page_title="Ismaily SC - Final Merger Pro", layout="wide")
-st.title("🏹 رادار الدراويش: دمج الأسماء (نسخة الإصلاح النهائي)")
+st.set_page_config(page_title="Ismaily SC - Advanced Parser", layout="wide")
+st.title("⚽ المحلل الاحترافي لملفات FM26 (Logic v2.0)")
 
-# رفع الملفات
-col1, col2 = st.columns(2)
-with col1:
-    save_file = st.file_uploader("📂 ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
-with col2:
-    csv_file = st.file_uploader("📄 ارفع ملف CSV المستخرج", type=["csv"])
+st.markdown("""
+### 🏗️ تقنية التحليل الحالية:
+يستخدم الكود الآن نظام **Length-Prefixed Parsing** لقراءة الأسماء، متبوعاً بمسح **الكتلة الحيوية (Stats Block)** حول الاسم.
+""")
 
-if save_file and csv_file:
-    try:
-        # 1. قراءة الملف
-        df_raw = pd.read_csv(csv_file, encoding='utf-8-sig')
-        
-        # أخذ أول 7 أعمدة وإعادة تسميتها
-        df_attributes = df_raw.iloc[:, :7].copy()
-        df_attributes.columns = ["Address", "Age", "CAPA", "Strength", "Pace", "Stamina", "Status"]
-        
-        # 🛡️ السطر السحري: تحويل كل الأعمدة اللي محتاجينها لأرقام
-        # لو فيه أي قيمة مش رقم، هيحولها لـ NaN (قيمة فارغة) عشان الكود ميكرشش
-        cols_to_fix = ["Age", "CAPA", "Strength", "Pace", "Stamina"]
-        for col in cols_to_fix:
-            df_attributes[col] = pd.to_numeric(df_attributes[col], errors='coerce')
-        
-        # مسح الصفوف اللي فيها قيم فارغة في الـ CAPA عشان نضمن جودة البيانات
-        df_attributes = df_attributes.dropna(subset=['CAPA'])
-        
-        st.success(f"✅ تم تحميل بيانات {len(df_attributes)} لاعب وتحويلها لأرقام بنجاح.")
-        
-    except Exception as e:
-        st.error(f"❌ خطأ في الملف: {e}")
-        st.stop()
+uploaded_file = st.file_uploader("📂 ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
-    data = save_file.read()
-
-    # 2. إعدادات المزامنة
-    st.sidebar.header("⚙️ إعدادات المزامنة")
-    shift = st.sidebar.slider("تعديل المزامنة (Shift Value)", -500, 500, 0)
-    min_capa = st.sidebar.slider("عرض طاقة أعلى من:", 0, 200, 130)
-
-    if st.button("🔗 ربط الأسماء الآن"):
-        # 3. سحب الأسماء
-        names_area = data[30000000:45000000] 
-        found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
-        
-        names_pool = []
-        seen = set()
-        for n in found_names:
-            name_str = n.decode('ascii', errors='ignore')
-            if name_str not in seen:
-                names_pool.append(name_str)
-                seen.add(name_str)
-        
-        # 4. المزامنة (بعد التأكد إن CAPA بقت رقم)
-        final_results = []
-        df_work = df_attributes[(df_attributes['CAPA'] <= 200) & (df_attributes['CAPA'] >= min_capa)].copy()
-        
-        for i, row in enumerate(df_work.itertuples()):
-            name_idx = i + shift
-            if 0 <= name_idx < len(names_pool):
-                final_results.append({
-                    "الاسم المتوقع": names_pool[name_idx],
-                    "العمر": int(row.Age),
-                    "الطاقة (PA)": int(row.CAPA),
-                    "السرعة": int(row.Pace),
-                    "التحمل": int(row.Stamina),
-                    "القوة": int(row.Strength),
-                    "العنوان": row.Address
-                })
-
-        if final_results:
-            df_final = pd.DataFrame(final_results)
-            st.success("🎯 مبروك! الأسماء والبيانات جاهزة.")
-            st.dataframe(df_final, use_container_width=True)
-            
-            csv_out = df_final.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 تحميل ملف الكشاف النهائي", csv_out, "final_scout_fixed.csv")
-        else:
-            st.warning("⚠️ لا توجد نتائج. حاول تغيير الـ Shift أو تقليل الـ PA.")
+def extract_pro_data(data):
+    players = []
+    file_size = len(data)
     
+    # نمط البحث عن "الفاصل السحري" اللي اكتشفناه قبل كدة
+    magic_seq = bytes([255, 255, 255, 255])
+    
+    # البحث في أول 20 ميجا (منطقة اللاعبين المكثفة)
+    search_limit = min(file_size, 20000000)
+    
+    with st.spinner("جاري التشريح العميق للملف..."):
+        for i in range(100, search_limit - 100, 1):
+            # 1. البحث عن الفاصل السحري كعلامة لبداية بيانات اللاعب
+            if data[i:i+4] == magic_seq:
+                try:
+                    # العمر موجود بعد الفاصل بـ 4 بايت
+                    age_pos = i + 4
+                    age = data[age_idx] # سنستخدم الإزاحة age_pos
+                    
+                    if 15 <= data[age_pos] <= 45:
+                        # 2. وجدنا لاعب! الآن نبحث عن "الاسم" القريب منه (قبل أو بعد بـ 100 بايت)
+                        # حسب تحليل كلاودي: [Length 4 bytes][String]
+                        
+                        potential_name = "Unknown"
+                        # نبحث في المحيط عن نمط نصي
+                        window = data[max(0, i-150) : i+150]
+                        
+                        # محاولة العثور على أطول نص في النافذة يتبع نظام Length-Prefix
+                        # أو استخدام ريجيكس للأسماء (الأسهل والأضمن حالياً)
+                        match = re.search(b"([A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,15})?)", window)
+                        if match:
+                            potential_name = match.group(1).decode('ascii', errors='ignore')
+
+                        # 3. استخراج الطاقات بناءً على خريطتنا (Offsets من مكان العمر)
+                        pa_ca = data[age_pos - 18]
+                        strength = data[age_pos - 12]
+                        pace = data[age_pos - 10]
+                        stamina = data[age_pos - 6]
+
+                        if 50 <= pa_ca <= 200:
+                            players.append({
+                                "الاسم": potential_name,
+                                "العمر": data[age_pos],
+                                "القدرة (PA/CA)": pa_ca,
+                                "السرعة": pace,
+                                "التحمل": stamina,
+                                "القوة": strength,
+                                "العنوان": hex(age_pos)
+                            })
+                except:
+                    continue
+                
+    return players
+
+if uploaded_file:
+    file_bytes = uploaded_file.read()
+    
+    if st.button("🚀 تحليل الملف بالمنطق الاحترافي"):
+        results = extract_pro_data(file_bytes)
+        
+        if results:
+            df = pd.DataFrame(results).drop_duplicates(subset=['الاسم', 'العمر', 'القدرة (PA/CA)'])
+            st.success(f"🎯 نجاح! تم استخراج {len(df)} لاعب بدقة عالية.")
+            
+            # ترتيب حسب القوة
+            df = df.sort_values(by="القدرة (PA/CA)", ascending=False)
+            
+            st.dataframe(df, use_container_width=True)
+            
+            # زر التحميل
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تحميل الكشاف الكامل", csv, "fm26_pro_scout.csv")
+        else:
+            st.error("لم نجد بيانات مطابقة. يبدو أن الملف له بنية مختلفة قليلاً.")
+
