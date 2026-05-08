@@ -1,95 +1,82 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="رادار صيد السمات - Ismaily SC", layout="wide")
-st.title("🏹 رادار الدراويش: الماسح الشامل بالبصمة الرقمية")
+st.set_page_config(page_title="Ismaily SC - The Ultimate Extractor", layout="wide")
+st.title("🏆 حاصد الأرواح: المستخرج النهائي لبيانات FM26")
 
 st.markdown("""
-### 💡 فكرة الكود المعدل:
-بدل البحث عن الأسماء (اللي ممكن تكون مشفرة أو بعيدة)، الكود ده بيمسح الملف بحثاً عن **"تجمع سمات"** لاعب إنت عارفه.
-1. دخل عمر اللاعب وسرعته وتحمله وقوته (زي ما هم في اللعبة).
-2. الكود هيطلع لك كل الأماكن اللي الأرقام دي ظهرت فيها "جنب بعض".
+### 💡 كيف يعمل؟
+الكود الآن يستخدم **"الخريطة الجينية الحقيقية"** التي اكتشفناها:
+السمات تسبق العمر بمسافات ثابتة (-6 للتحمل، -10 للسرعة، -18 للـ PA/CA).
 """)
 
 uploaded_file = st.file_uploader("📂 ارفع ملف الحفظ (.fms / .dat)", type=["dat", "fms", "sav"])
 
-# ------------------- إعدادات البحث بالبصمة -------------------
-with st.sidebar:
-    st.header("🎯 البصمة المستهدفة")
-    target_age = st.number_input("العمر (مثلاً 33):", value=33)
-    
-    st.subheader("📊 السمات المرئية (من اللعبة)")
-    s_pace = st.number_input("السرعة (Pace):", value=11)
-    s_stam = st.number_input("التحمل (Stamina):", value=8)
-    s_stre = st.number_input("القوة (Strength):", value=14)
-    
-    st.divider()
-    st.header("⚙️ إعدادات المسح")
-    search_range = st.slider("نطاق البحث حول العمر (بايت)", 5, 50, 20)
-    max_results = st.number_input("أقصى عدد نتائج", value=50)
-
-# ------------------- معالجة الملف -------------------
 if uploaded_file:
-    file_data = uploaded_file.read()
-    raw_bytes = list(file_data)
+    data = uploaded_file.read()
+    raw_bytes = list(data)
+    file_size = len(data)
     
-    if st.button("🚀 ابدأ المسح الشامل في الملف"):
-        results = []
+    if st.button("🚀 استخراج قاعدة بيانات اللاعبين"):
+        players_data = []
         
-        # تحويل القيم لليست للبحث السريع
-        target_cluster = [s_pace, s_stam, s_stre]
-        
-        # المسح الشامل (بنتخطى أول بايتات لأنها Header)
-        with st.spinner("جاري فحص الملف بايت بايت..."):
-            for i in range(100, len(raw_bytes) - 100):
-                # البحث عن العمر كبوابة دخول
-                if raw_bytes[i] == target_age:
-                    # فحص المنطقة المحيطة (النافذة)
-                    window = raw_bytes[i - search_range : i + search_range]
-                    
-                    # هل السمات التانية موجودة في النافذة دي؟
-                    if all(attr in window for attr in target_cluster):
-                        results.append({
-                            "العنوان (Index)": i,
-                            "العنوان (Hex)": hex(i),
-                            "المحيط الرقمي": window
-                        })
-                
-                if len(results) >= max_results:
+        with st.spinner("جاري حصاد اللاعبين بناءً على الشفرة المكتشفة..."):
+            # البحث عن الفاصل السحري 255, 255, 255, 255
+            magic_sequence = bytes([255, 255, 255, 255])
+            start_pos = 0
+            
+            while True:
+                # العثور على مكان الفاصل
+                idx = data.find(magic_sequence, start_pos)
+                if idx == -1 or idx > 20000000: # نبحث في أول 20 ميجا
                     break
+                
+                # العنوان اللي بعد الفاصل مباشرة هو "العمر" (Index 0 في خريطتنا)
+                age_idx = idx + 4 
+                
+                if age_idx < len(raw_bytes):
+                    age = raw_bytes[age_idx]
+                    
+                    # فلترة منطقية: العمر لازم يكون بين 15 و 45
+                    if 15 <= age <= 45:
+                        try:
+                            # استخراج البيانات باستخدام الإزاحات (Offsets) اللي اكتشفناها
+                            ca_pa_val = raw_bytes[age_idx - 18]
+                            strength  = raw_bytes[age_idx - 12]
+                            pace      = raw_bytes[age_idx - 10]
+                            stamina   = raw_bytes[age_idx - 6]
+                            
+                            # فلترة إضافية عشان نتأكد إن ده لاعب بجد مش بيانات عشوائية
+                            if ca_pa_val > 50 and pace <= 20 and stamina <= 20 and strength <= 20:
+                                players_data.append({
+                                    "العنوان (Hex)": hex(age_idx),
+                                    "العمر": age,
+                                    "الـ CA/PA": ca_pa_val,
+                                    "القوة": strength,
+                                    "السرعة": pace,
+                                    "التحمل": stamina,
+                                    "بصمة التأكيد": "✅"
+                                })
+                        except IndexError:
+                            pass
+                
+                # تحريك نقطة البحث
+                start_pos = idx + 1
 
-        if results:
-            st.success(f"🎯 تم العثور على {len(results)} مكان يطابق هذه البصمة!")
+        if players_data:
+            st.success(f"🎉 الله أكبر! تم استخراج بيانات {len(players_data)} لاعب بنجاح!")
+            df = pd.DataFrame(players_data)
             
-            # عرض النتائج في جدول
-            display_data = []
-            for r in results:
-                display_data.append({
-                    "Hex Address": r["العنوان (Hex)"],
-                    "Raw Sequence": str(r["المحيط الرقمي"])
-                })
+            # ترتيب اللاعبين من الأعلى طاقة للأقل
+            df = df.sort_values(by="الـ CA/PA", ascending=False).reset_index(drop=True)
             
-            st.table(pd.DataFrame(display_data))
+            st.dataframe(df, use_container_width=True)
             
-            # تحليل أعمق لأول نتيجة (التشريح الرقمي)
-            st.divider()
-            st.subheader("🔬 تشريح أول بصمة مكتشفة")
-            target_idx = results[0]["العنوان (Index)"]
-            
-            analysis = []
-            for offset in range(-20, 25):
-                idx = target_idx + offset
-                val = raw_bytes[idx]
-                analysis.append({
-                    "Offset": offset,
-                    "Value": val,
-                    "Hex": hex(val),
-                    "Note": "🎯 العمر" if offset == 0 else "⭐ سمة" if val in target_cluster else ""
-                })
-            
-            st.dataframe(pd.DataFrame(analysis).T)
-            st.info("💡 بص على القيم اللي جنب 'العمر' بمسافات ثابتة.. لو لقيت رقم عالي (زي 170) قبل العمر بـ 2 أو 4 بايت، مبروك ده هو الـ PA.")
-            
+            # تحميل الملف
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تحميل قاعدة البيانات (CSV)", csv, "ismaily_fm26_database.csv", "text/csv")
         else:
-            st.error("❌ لم يتم العثور على أي تطابق. ده معناه إن القيم في الملف ممكن تكون (مجموعة + 1) أو (مجموعة - 1) أو المسافات بعيدة.")
+            st.error("لم يتم العثور على بيانات مطابقة. تأكد من الملف.")
 
+st.info("💡 **ملاحظة:** الجدول هيطلع لك كل اللعيبة بأعمارهم وطاقاتهم. خطوتنا الجاية هي دمج الأسامي معاهم، بس خلينا نحتفل بإننا كسرنا التشفير الرقمي الأول!")
+                            
