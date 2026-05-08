@@ -1,104 +1,75 @@
 import streamlit as st
 import pandas as pd
-import re
 
-st.set_page_config(page_title="Ismaily SC - Player Search Engine", layout="wide")
-st.title("🏹 رادار الدراويش: محرك البحث عن اللاعبين")
+st.set_page_config(page_title="Ismaily SC - Index Finder", layout="wide")
+st.title("🏹 كاشف الـ Index والقيم - FM26")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
     data = uploaded_file.read()
-    raw_bytes = list(data)
+    raw_bytes = list(data) # تحويل الملف لقائمة أرقام (Values)
     
-    # 1. استخراج كل الأسماء من منطقة الـ 30 مليون
-    st.sidebar.info("🔍 جاري جرد الأسماء...")
-    names_area = data[30000000:45000000]
-    # نمط للبحث عن الأسماء الكاملة (كلمتين بتبدأ بحرف كبير)
-    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
-    names_pool = [n.decode('ascii', errors='ignore') for n in found_names]
-    names_pool = list(dict.fromkeys(names_pool)) # حذف التكرار
+    st.sidebar.header("🔍 إعدادات البحث")
+    search_type = st.sidebar.selectbox("نوع البحث", ["بحث عن تسلسل (بصمة)", "عرض نطاق محدد (Dump)"])
 
-    # 2. استخراج كتل بيانات اللاعبين (PA, Age, Stats)
-    st.sidebar.info("📡 جاري استخراج الطاقات...")
-    player_data = []
-    # المسح في المنطقة المتوقع فيها الطاقات (من 1MB لـ 15MB)
-    for i in range(1000, 15000000, 4):
-        pa = raw_bytes[i]
-        if 130 <= pa <= 200: # بنجيب اللعيبة المهمة بس
-            age = raw_bytes[i+2]
-            if 15 <= age <= 40:
-                player_data.append({
-                    "PA": pa,
-                    "العمر": age,
-                    "السرعة": raw_bytes[i+6],
-                    "التحمل": raw_bytes[i+7],
-                    "القوة": raw_bytes[i+8],
-                    "العنوان (Hex)": hex(i),
-                    "Index": len(player_data)
-                })
-
-    if player_data and names_pool:
-        df_players = pd.DataFrame(player_data)
-        
-        # 3. محرك البحث بالاسم
-        st.subheader("🔎 ابحث عن بيانات اللاعب")
-        search_query = st.text_input("اكتب اسم اللاعب هنا (مثلاً: Courtois أو Valverde):")
-        
-        # لوحة التحكم في الـ Shift (المزامنة)
-        st.sidebar.header("⚙️ ضبط المزامنة")
-        shift = st.sidebar.number_input("تعديل الترتيب (Shift)", value=0)
-
-        if search_query:
-            # البحث عن الـ Index بتاع الاسم في المخزن
-            matching_names = [n for n in names_pool if search_query.lower() in n.lower()]
+    if search_type == "بحث عن تسلسل (بصمة)":
+        target_input = st.text_input("أدخل الأرقام المطلوبة (مثلاً: 33,11,8,14)", "33,11,8,14")
+        if target_input:
+            # تحويل المدخلات لقائمة أرقام
+            target_sequence = [int(x.strip()) for x in target_input.split(",")]
+            n = len(target_sequence)
             
-            if matching_names:
-                st.write(f"✅ تم العثور على {len(matching_names)} اسم مطابق.")
+            results = []
+            st.info(f"جاري البحث عن التسلسل {target_sequence}...")
+            
+            # البحث في أول 15 مليون بايت
+            for i in range(len(raw_bytes[:15000000]) - n):
+                if raw_bytes[i:i+n] == target_sequence:
+                    results.append({
+                        "بداية الـ Index": i,
+                        "العنوان (Hex)": hex(i),
+                        "التسلسل الموجود": str(raw_bytes[i:i+n])
+                    })
+            
+            if results:
+                st.success(f"✅ تم العثور على {len(results)} مطابقة!")
+                df_results = pd.DataFrame(results)
+                st.table(df_results)
                 
-                results = []
-                for name in matching_names:
-                    name_idx = names_pool.index(name)
-                    # بنحاول نلاقي بيانات اللاعب بناءً على الترتيب والـ Shift
-                    data_idx = name_idx - shift
-                    
-                    if 0 <= data_idx < len(df_players):
-                        row = df_players.iloc[data_idx]
-                        results.append({
-                            "الاسم": name,
-                            "PA (الموهبة)": row["PA"],
-                            "العمر": row["العمر"],
-                            "السرعة": row["السرعة"],
-                            "التحمل": row["التحمل"],
-                            "القوة": row["القوة"],
-                            "مكانه في الـ Hex": row["العنوان (Hex)"]
+                # إظهار التفاصيل لكل نتيجة
+                selected_index = st.selectbox("اختار Index عشان تشوف اللي حوله:", df_results["بداية الـ Index"])
+                if selected_index:
+                    st.write(f"### البيانات حول الـ Index: {selected_index}")
+                    neighborhood = []
+                    for j in range(selected_index - 5, selected_index + 20):
+                        neighborhood.append({
+                            "الـ Index": j,
+                            "العنوان (Hex)": hex(j),
+                            "القيمة (Value)": raw_bytes[j] if j < len(raw_bytes) else "N/A"
                         })
-                
-                if results:
-                    st.table(results)
-                    st.success("💡 نصيحة: لو العمر مش مظبوط، غير رقم الـ Shift في الجنب لحد ما يظبط.")
-                else:
-                    st.warning("الاسم موجود لكن لم نجد بيانات مقابلة له في هذا النطاق.")
+                    st.dataframe(pd.DataFrame(neighborhood), height=500)
             else:
-                st.error("الاسم ده مش موجود في مخزن الأسماء الحالي.")
+                st.error("لم يتم العثور على هذا التسلسل.")
 
-        # عرض عينة شاملة تحت للتدقيق
-        st.write("---")
-        st.subheader("📊 معاينة سريعة لكافة اللاعبين")
+    elif search_type == "عرض نطاق محدد (Dump)":
+        start_idx = st.number_input("ابدأ من Index رقم:", value=4578412) # مثال لعنوان كورتوا
+        length = st.number_input("عدد البايتات للعرض:", value=100)
         
-        sample_results = []
-        for i in range(min(100, len(df_players))):
-            n_idx = i + shift
-            if 0 <= n_idx < len(names_pool):
-                sample_results.append({
-                    "الاسم": names_pool[n_idx],
-                    "PA": df_players.iloc[i]["PA"],
-                    "العمر": df_players.iloc[i]["العمر"],
-                    "العنوان": df_players.iloc[i]["العنوان (Hex)"]
+        dump_data = []
+        for i in range(start_idx, start_idx + length):
+            if i < len(raw_bytes):
+                dump_data.append({
+                    "الـ Index": i,
+                    "العنوان (Hex)": hex(i),
+                    "القيمة": raw_bytes[i]
                 })
-        st.dataframe(pd.DataFrame(sample_results), use_container_width=True)
+        
+        st.subheader(f"📊 عرض البيانات من {start_idx} إلى {start_idx + length}")
+        st.table(pd.DataFrame(dump_data))
 
-        # زر التحميل
-        full_csv = pd.DataFrame(sample_results).to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل النتائج الحالية", full_csv, "search_results.csv", "text/csv")
-                
+    # زر تحميل البيانات المعروضة
+    if 'dump_data' in locals() or 'results' in locals():
+        csv_data = pd.DataFrame(results if search_type == "بحث عن تسلسل (بصمة)" else dump_data)
+        st.download_button("📥 تحميل هذه القائمة (CSV)", csv_data.to_csv(index=False).encode('utf-8-sig'), "index_dump.csv")
+    
