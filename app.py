@@ -1,103 +1,83 @@
 import streamlit as st
 import pandas as pd
-import re
 
-st.set_page_config(page_title="Ismaily SC - Global Scanner", layout="wide")
-st.title("🏹 رادار الدراويش: الماسح الشامل للملف")
+st.set_page_config(page_title="Ismaily SC - Attribute Hunter", layout="wide")
+st.title("🏹 رادار الدراويش: الماسح العالمي للسمات")
+
+st.markdown("""
+### 💡 فكرة البحث:
+أدخل أرقام السمات التي تراها في اللعبة (مثل عمر كورتوا وسرعته وقوته)، وسيقوم الكود بفحص الملف بالكامل للعثور على أي منطقة تحتوي على هذه الأرقام متقاربة.
+""")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
-    # قراءة الملف كبايتات
+    # قراءة الملف ككتلة واحدة لسرعة البحث
     data = uploaded_file.read()
     raw_bytes = list(data)
     file_size = len(data)
     
-    st.info(f"📁 تم تحميل الملف. الحجم: {file_size / (1024*1024):.2f} MB")
-
-    # 1. المرحلة الأولى: جلب مخزن الأسماء (Name Pool)
-    # بنسحب كل اللي شبه الأسامي من المنطقة المعتادة
-    st.sidebar.info("🔍 جاري جرد الأسماء...")
-    names_area = data[30000000:45000000] if file_size > 40000000 else data
-    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
-    names_pool = list(dict.fromkeys([n.decode('ascii', errors='ignore') for n in found_names]))
+    st.sidebar.header("🎯 البصمة المستهدفة")
+    target_age = st.sidebar.number_input("العمر المكتوب في اللعبة:", value=32)
     
-    st.sidebar.success(f"✅ تم العثور على {len(names_pool)} اسم.")
+    st.sidebar.subheader("📊 السمات المرئية")
+    # يمكنك إضافة أي سمات أخرى هنا لزيادة دقة البحث
+    s_pace = st.sidebar.number_input("السرعة (Pace):", value=11)
+    s_stam = st.sidebar.number_input("التحمل (Stamina):", value=8)
+    s_stre = st.sidebar.number_input("القوة (Strength):", value=14)
+    s_accel = st.sidebar.number_input("التسارع (Acceleration):", value=11)
 
-    # 2. إعدادات البحث الشامل
-    st.subheader("⚙️ إعدادات البحث الشامل")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        search_limit = st.number_input("نطاق البحث (بالميجابايت):", value=20) * 1024 * 1024
-    with col2:
-        min_pa = st.number_input("أقل PA للبحث عنه:", value=130)
-    with col3:
-        shift_val = st.number_input("قيمة الـ Shift (للمزامنة):", value=0)
+    if st.button("🚀 ابدأ مسح الملف بالكامل"):
+        results = []
+        # نحدد نطاق البحث (غالباً أول 20 ميجا من الملف)
+        search_limit = min(file_size, 20000000)
+        
+        with st.spinner("جاري فحص الملايين من البايتات..."):
+            # القفز بمقدار 4 بايتات لتسريع العملية (نمط اللعبة)
+            for i in range(1000, search_limit, 4):
+                # إذا وجدنا العمر في هذا البايت
+                if raw_bytes[i] == target_age:
+                    # نفحص المنطقة المحيطة (نطاق 25 بايت) هل تحتوي على باقي السمات؟
+                    window = raw_bytes[max(0, i-15) : min(len(raw_bytes), i+20)]
+                    
+                    # شرط المطابقة: يجب أن توجد كل هذه السمات في نفس المنطقة
+                    if s_pace in window and s_stam in window and s_stre in window and s_accel in window:
+                        results.append({
+                            "Index": i,
+                            "العنوان (Hex)": hex(i),
+                            "البصمة المكتشفة": str(window)
+                        })
+                
+                # إيقاف البحث إذا وجدنا نتائج كثيرة جداً لحماية المتصفح
+                if len(results) > 50: break
 
-    if st.button("🚀 ابدأ المسح الشامل للملف"):
-        progress_bar = st.progress(0)
-        final_results = []
-        
-        # 3. المسح الرقمي (Attribute Scanning)
-        # بنمشي في منطقة الطاقات ونطلع "البلوكات" اللي فيها بيانات حقيقية
-        st.write("📡 جاري مطابقة البيانات الرقمية بالأسماء...")
-        
-        temp_stats = []
-        for i in range(1000, int(search_limit), 4):
-            pa = raw_bytes[i]
-            if min_pa <= pa <= 200:
-                age = raw_bytes[i+2]
-                if 15 <= age <= 40:
-                    temp_stats.append({
-                        "index": i,
-                        "pa": pa,
-                        "age": age,
-                        "pace": raw_bytes[i+6],
-                        "stam": raw_bytes[i+7],
-                        "stre": raw_bytes[i+8]
-                    })
-        
-        # 4. المزامنة (The Matching Engine)
-        for idx, stat in enumerate(temp_stats):
-            # تحديث شريط التقدم
-            if idx % 100 == 0:
-                progress_bar.progress(min(idx / len(temp_stats), 1.0))
+        if results:
+            st.success(f"🎯 تم العثور على {len(results)} منطقة تطابق هذه السمات!")
+            df_results = pd.DataFrame(results)
+            st.table(df_results)
             
-            # ربط كل بلوك بيانات بالاسم المقابل له بناءً على الترتيب والـ Shift
-            name_idx = idx + shift_val
-            if 0 <= name_idx < len(names_pool):
-                final_results.append({
-                    "الاسم": names_pool[name_idx],
-                    "PA": stat["pa"],
-                    "العمر": stat["age"],
-                    "السرعة": stat["pace"],
-                    "التحمل": stat["stam"],
-                    "القوة": stat["stre"],
-                    "العنوان (Hex)": hex(stat["index"])
+            # تحليل هيكل أول نتيجة وجدناها
+            st.write("### 🔬 التشريح الرقمي للاعب المكتشف:")
+            match_idx = results[0]["Index"]
+            structure = []
+            for offset in range(-15, 25):
+                curr_idx = match_idx + offset
+                structure.append({
+                    "الإزاحة (Offset)": offset,
+                    "القيمة": raw_bytes[curr_idx],
+                    "Hex": hex(raw_bytes[curr_idx]),
+                    "ملاحظة": "العمر المستهدف" if offset == 0 else ""
                 })
-
-        if final_results:
-            st.success(f"🎯 تم العثور على {len(final_results)} لاعب بنجاح!")
-            df_final = pd.DataFrame(final_results)
+            st.dataframe(pd.DataFrame(structure).T)
             
-            # عرض البيانات
-            st.dataframe(df_final, use_container_width=True)
-            
-            # زر التحميل الشامل
-            csv = df_final.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 تحميل قاعدة بيانات اللاعبين بالكامل (CSV)",
-                data=csv,
-                file_name="ismaily_global_scout.csv",
-                mime="text/csv",
-            )
+            st.info("💡 انظر للقيمة التي تسبق 'العمر' بمسافة ثابتة (غالباً خطوتين أو أربعة)، ستجد الـ PA الخاص باللاعب.")
         else:
-            st.warning("لم يتم العثور على نتائج. حاول تغيير قيمة الـ Shift أو نطاق البحث.")
+            st.error("❌ لم نجد هذا التجمع من الأرقام في الملف. تأكد من إدخال الأرقام بدقة كما هي في اللعبة.")
 
 st.markdown("""
-### 💡 إزاي تستخدم الكود ده صح؟
-1. **ارفع الملف:** هيبدأ فوراً يلم الأسامي.
-2. **المعايرة (الـ Shift):** دي أهم خطوة. بص على أول كام لاعب في الجدول. لو لقيت الاسم مش راكب على العمر (مثلاً طالع لك اسم حارس وعمره 17 سنة)، غير رقم الـ **Shift** لحد ما تلاقي أول 5 لعيبة بياناتهم صح.
-3. **البحث الشامل:** بمجرد ما تظبط الـ Shift، اضغط على الزرار وسيب الكود يمسح الملف كله ويطلع لك ملف الإكسيل النهائي.
+### 📝 لماذا هذا الكود أفضل؟
+1. **شامل:** يمسح الملف بالكامل دون الحاجة لمعرفة مكان الأسماء.
+2. **مرن:** يمكنك البحث بسمتين أو عشر سمات لتقليل النتائج العشوائية.
+3. **كاشف:** بمجرد أن تجد "البلوك" الخاص باللاعب، ستعرف أماكن السمات المخفية (مثل PA و CA) لأنها ستكون دائماً في نفس المسافة من العمر.
 """)
                     
