@@ -1,90 +1,76 @@
 import streamlit as st
 import pandas as pd
-import re
+import struct
 
-st.set_page_config(page_title="Ismaily SC - Flexible Scout", layout="wide")
-st.title("🏹 رادار الدراويش: البحث المرن عن البصمة")
+st.set_page_config(page_title="Ismaily SC - Full Decoder", layout="wide")
+st.title("🏹 مستخرج بيانات FM26 الشامل")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
     data = uploaded_file.read()
-    raw_bytes = list(data)
+    file_size = len(data)
     
-    st.info("🔍 جاري جرد الأسماء من منطقة الـ 30 مليون...")
-    names_area = data[30000000:45000000]
-    # نمط محسن لجلب الأسماء الحقيقية فقط
-    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{2,15})?", names_area)
-    names_pool = [n.decode('ascii', errors='ignore') for n in found_names]
-    names_pool = list(dict.fromkeys(names_pool))
+    st.info(f"⏳ جاري مسح {file_size / (1024*1024):.2f} ميجابايت... انتظر قليلاً.")
 
-    # البحث المرن عن كورتوا
-    st.info("🎯 جاري محاولة تحديد موقع كورتوا (عمر 33 - سرعة 11)...")
-    courtois_offset = -1
+    all_players = []
     
-    # هنبحث في أول 20 مليون بايت
-    for i in range(1000, 20000000, 1):
-        # بنبحث عن العمر 33 وبعده بمسافة بسيطة السرعة 11
-        if raw_bytes[i+2] == 33: # العمر
-            # بنشوف الـ 10 بايتات اللي بعده هل فيهم 11 (السرعة)؟
-            if 11 in raw_bytes[i+3:i+15]: 
-                courtois_offset = i
-                break
-    
-    if courtois_offset != -1:
-        st.success(f"📍 تم العثور على نقطة قريبة من كورتوا في العنوان: {hex(courtois_offset)}")
-        
-        player_list = []
-        # سحب البيانات بنمط القفزات الثابتة (Offset)
-        for i in range(1000, 15000000, 4):
-            pa = raw_bytes[i]
-            if 140 <= pa <= 200:
-                age = raw_bytes[i+2]
-                if 15 <= age <= 40:
-                    # بنسحب القيم اللي حول الـ PA
-                    player_list.append({
-                        "PA": pa, "العمر": age, 
-                        "السرعة": raw_bytes[i+6] if i+6 < len(raw_bytes) else 0,
-                        "التحمل": raw_bytes[i+7] if i+7 < len(raw_bytes) else 0,
-                        "Address": i
-                    })
-        
-        df_players = pd.DataFrame(player_list).drop_duplicates(subset=['Address'])
-        
-        st.sidebar.header("⚙️ الضبط اليدوي")
-        shift = st.sidebar.number_input("تعديل الترتيب (Shift)", value=0)
-        
-        # محاولة مزامنة ذكية
-        auto_shift = 0
-        if "Thibaut Courtois" in names_pool:
-            target_idx = names_pool.index("Thibaut Courtois")
-            # بنحاول نخلي أول لاعب PA عالي يقابل أول اسم مهم
-            auto_shift = target_idx
+    # هنمشي على الملف بايت بايت عشان ميفوتناش هفوة
+    # منطقة طاقات اللاعبين عادة بتبدأ بعد أول 1000 بايت
+    for i in range(1000, min(file_size, 25000000), 1):
+        try:
+            # قراءة الـ PA (البايت الحالي)
+            pa = data[i]
             
-        final_results = []
-        for idx, row in enumerate(df_players.itertuples()):
-            n_idx = idx + shift + auto_shift
-            if 0 <= n_idx < len(names_pool):
-                final_results.append({
-                    "الاسم": names_pool[n_idx],
-                    "PA": row.PA,
-                    "العمر": row.العمر,
-                    "السرعة": row.السرعة,
-                    "التحمل": row.التحمل
-                })
-        
-        final_df = pd.DataFrame(final_results)
-        
-        st.subheader("📊 فحص جودة البيانات")
-        # هنعرض أول 20 لاعب عشان تشوف كورتوا ظهر فين
-        st.table(final_df.head(20))
-        
-        st.subheader("💎 قائمة الجواهر (Wonderkids)")
-        wonderkids = final_df[(final_df['PA'] >= 180) & (final_df['العمر'] <= 21)]
-        st.dataframe(wonderkids.sort_values(by="PA", ascending=False), use_container_width=True)
+            # لو الـ PA في نطاق النجوم (150 لـ 200)
+            if 150 <= pa <= 200:
+                # التأكد من العمر (موجود بعد الـ PA بـ 2 بايت)
+                age = data[i+2]
+                if 15 <= age <= 40:
+                    # قراءة باقي الخصائص (بافتراض المسافات القياسية في FM Mobile)
+                    pace = data[i+6]
+                    stamina = data[i+7]
+                    strength = data[i+8]
+                    
+                    # فلتر إضافي للتأكد إن دي بيانات لاعب مش أرقام عشوائية
+                    if 1 <= pace <= 20 and 1 <= stamina <= 20:
+                        all_players.append({
+                            "العنوان (Hex)": hex(i),
+                            "PA": pa,
+                            "العمر": age,
+                            "السرعة": pace,
+                            "التحمل": stamina,
+                            "القوة": strength,
+                            "البيانات الخام": data[i:i+10].hex() # عشان لو حبيت تراجعها بالـ Hex Editor
+                        })
+        except IndexError:
+            break
 
-        csv = final_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل التقرير", csv, "ismaily_flexible_scout.csv", "text/csv")
+    if all_players:
+        df = pd.DataFrame(all_players).drop_duplicates(subset=['العنوان (Hex)'])
+        st.success(f"✅ تم العثور على {len(df)} بصمة لاعب محتملة!")
+        
+        # عرض عينة
+        st.subheader("🔍 عينة من البيانات المستخرجة")
+        st.dataframe(df.head(50), use_container_width=True)
+        
+        # أهم جزء: تحميل البيانات
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 تحميل كافة البيانات المستخرجة (CSV)",
+            data=csv,
+            file_name="ismaily_full_dump.csv",
+            mime="text/csv",
+        )
+        
+        st.write("---")
+        st.markdown("""
+        ### 💡 إزاي تلاقي كورتوا أو إندريك في الملف ده؟
+        1. حمل ملف الـ **CSV** وافتحه ببرنامج **Excel**.
+        2. اعمل **Filter** لعمود 'العمر' واختار (33) لكورتوا أو (19) لإندريك.
+        3. بص على عمود 'السرعة' و 'التحمل' وقارنهم باللي عندك في اللعبة.
+        4. أول ما تلاقي كورتوا، شوف **العنوان (Hex)** بتاعه.. ده اللي هيخلينا نربط الأسامي صح المرة الجاية.
+        """)
     else:
-        st.error("❌ لسه مش لاقي البصمة. جرب تفتح اللعبة وتأكد من طاقة 'إندريك' (Endrick) واكتبها لي.")
+        st.error("❌ لم يتم العثور على أي بيانات تطابق المواصفات. حاول رفع ملف حفظ آخر.")
         
