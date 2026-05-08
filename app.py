@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Final Master Key", layout="wide")
-st.title("🏹 رادار الدراويش: فك التشفير النهائي")
+st.set_page_config(page_title="Ismaily SC - Flexible Scout", layout="wide")
+st.title("🏹 رادار الدراويش: البحث المرن عن البصمة")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
@@ -11,92 +11,80 @@ if uploaded_file:
     data = uploaded_file.read()
     raw_bytes = list(data)
     
-    # 1. تنظيف مخزن الأسماء (فلتر الأندية والدوريات)
-    st.sidebar.info("🔍 جاري جرد وتصفية الأسماء...")
+    st.info("🔍 جاري جرد الأسماء من منطقة الـ 30 مليون...")
     names_area = data[30000000:45000000]
-    # نمط يجلب الاسم الكامل (اسمين وبينهم مسافة) ويستبعد الكلمات القصيرة جداً
-    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
-    names_pool = []
-    # فلتر لاستبعاد الكلمات المشهورة للأندية
-    trash_words = ['Madrid', 'Paris', 'City', 'United', 'League', 'Club', 'Team', 'Stadium', 'Division']
-    for n in found_names:
-        name_str = n.decode('ascii', errors='ignore')
-        if name_str not in names_pool and not any(w in name_str for w in trash_words):
-            names_pool.append(name_str)
+    # نمط محسن لجلب الأسماء الحقيقية فقط
+    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{2,15})?", names_area)
+    names_pool = [n.decode('ascii', errors='ignore') for n in found_names]
+    names_pool = list(dict.fromkeys(names_pool))
 
-    # 2. البحث عن "كورتوا" (البوصلة)
-    # كورتوا: 33 سنة، 11 سرعة، 8 تحمل، 14 قوة
-    st.info("🎯 جاري قنص 'Thibaut Courtois' لتحديد نقطة الصفر...")
+    # البحث المرن عن كورتوا
+    st.info("🎯 جاري محاولة تحديد موقع كورتوا (عمر 33 - سرعة 11)...")
     courtois_offset = -1
-    for i in range(1000, 20000000):
-        # بصمة كورتوا: العمر (i+2)، السرعة (i+6)، التحمل (i+7)، القوة (i+8)
-        if raw_bytes[i+2] == 33 and raw_bytes[i+6] == 11 and raw_bytes[i+7] == 8 and raw_bytes[i+8] == 14:
-            courtois_offset = i
-            break
+    
+    # هنبحث في أول 20 مليون بايت
+    for i in range(1000, 20000000, 1):
+        # بنبحث عن العمر 33 وبعده بمسافة بسيطة السرعة 11
+        if raw_bytes[i+2] == 33: # العمر
+            # بنشوف الـ 10 بايتات اللي بعده هل فيهم 11 (السرعة)؟
+            if 11 in raw_bytes[i+3:i+15]: 
+                courtois_offset = i
+                break
     
     if courtois_offset != -1:
-        st.success(f"📍 تم العثور على كورتوا في العنوان: {hex(courtois_offset)}")
+        st.success(f"📍 تم العثور على نقطة قريبة من كورتوا في العنوان: {hex(courtois_offset)}")
         
-        # 3. استخراج اللاعبين بناءً على المسافة الحقيقية
-        # في FM Mobile المسافة غالباً بتكون ثابتة (مثلاً 100 أو 120 بايت)
-        # هنجرب نمسح المنطقة اللي بعد كورتوا بذكاء
-        final_list = []
-        # البحث عن أي بايت PA في المنطقة المحيطة بكورتوا
-        for i in range(1000, 15000000, 4): # فحص كل 4 بايتات للسرعة
+        player_list = []
+        # سحب البيانات بنمط القفزات الثابتة (Offset)
+        for i in range(1000, 15000000, 4):
             pa = raw_bytes[i]
             if 140 <= pa <= 200:
                 age = raw_bytes[i+2]
                 if 15 <= age <= 40:
-                    pace = raw_bytes[i+6]
-                    if 5 <= pace <= 20: # شرط منطقية السرعة
-                        final_list.append({
-                            "PA": pa, "العمر": age, "السرعة": pace,
-                            "التحمل": raw_bytes[i+7], "القوة": raw_bytes[i+8],
-                            "Address": i
-                        })
+                    # بنسحب القيم اللي حول الـ PA
+                    player_list.append({
+                        "PA": pa, "العمر": age, 
+                        "السرعة": raw_bytes[i+6] if i+6 < len(raw_bytes) else 0,
+                        "التحمل": raw_bytes[i+7] if i+7 < len(raw_bytes) else 0,
+                        "Address": i
+                    })
         
-        df_players = pd.DataFrame(final_list).drop_duplicates(subset=['Address'])
+        df_players = pd.DataFrame(player_list).drop_duplicates(subset=['Address'])
         
-        # 4. المزامنة (Shift)
-        st.sidebar.header("⚙️ ضبط يدوي")
+        st.sidebar.header("⚙️ الضبط اليدوي")
         shift = st.sidebar.number_input("تعديل الترتيب (Shift)", value=0)
         
-        # محاولة وضع كورتوا في مكانه
+        # محاولة مزامنة ذكية
         auto_shift = 0
         if "Thibaut Courtois" in names_pool:
-            # بنحسب كورتوا ترتيبه كام في قائمة الـ PA ونخليه يقابل اسمه
-            courtois_data_idx = df_players[df_players['Address'] == courtois_offset].index
-            if not courtois_data_idx.empty:
-                name_idx = names_pool.index("Thibaut Courtois")
-                auto_shift = name_idx - courtois_data_idx[0]
-        
-        applied_shift = shift + auto_shift
-        
-        results = []
+            target_idx = names_pool.index("Thibaut Courtois")
+            # بنحاول نخلي أول لاعب PA عالي يقابل أول اسم مهم
+            auto_shift = target_idx
+            
+        final_results = []
         for idx, row in enumerate(df_players.itertuples()):
-            n_idx = idx + applied_shift
+            n_idx = idx + shift + auto_shift
             if 0 <= n_idx < len(names_pool):
-                results.append({
+                final_results.append({
                     "الاسم": names_pool[n_idx],
                     "PA": row.PA,
                     "العمر": row.العمر,
                     "السرعة": row.السرعة,
-                    "التحمل": row.التحمل,
-                    "القوة": row.القوة
+                    "التحمل": row.التحمل
                 })
         
-        final_df = pd.DataFrame(results)
+        final_df = pd.DataFrame(final_results)
         
-        # عرض التأكيد
-        st.subheader("✅ فحص مطابقة ريال مدريد")
-        targets = ["Courtois", "Brahim", "Endrick"]
-        st.table(final_df[final_df['الاسم'].str.contains('|'.join(targets), case=False)])
+        st.subheader("📊 فحص جودة البيانات")
+        # هنعرض أول 20 لاعب عشان تشوف كورتوا ظهر فين
+        st.table(final_df.head(20))
+        
+        st.subheader("💎 قائمة الجواهر (Wonderkids)")
+        wonderkids = final_df[(final_df['PA'] >= 180) & (final_df['العمر'] <= 21)]
+        st.dataframe(wonderkids.sort_values(by="PA", ascending=False), use_container_width=True)
 
-        st.subheader("💎 قائمة المواهب (PA 180+)")
-        st.dataframe(final_df[final_df['PA'] >= 180].sort_values(by="PA", ascending=False), use_container_width=True)
-        
         csv = final_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل الكشف النهائي", csv, "ismaily_final_sync.csv", "text/csv")
+        st.download_button("📥 تحميل التقرير", csv, "ismaily_flexible_scout.csv", "text/csv")
     else:
-        st.error("❌ لم نجد بصمة كورتوا (33-11-8-14). تأكد أنك لم تقم بتغيير طاقاته في اللعبة.")
-                
+        st.error("❌ لسه مش لاقي البصمة. جرب تفتح اللعبة وتأكد من طاقة 'إندريك' (Endrick) واكتبها لي.")
+        
