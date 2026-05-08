@@ -1,82 +1,62 @@
 import streamlit as st
 import pandas as pd
+import re
 
-st.set_page_config(page_title="Ismaily SC - The Ultimate Extractor", layout="wide")
-st.title("🏆 حاصد الأرواح: المستخرج النهائي لبيانات FM26")
+st.set_page_config(page_title="Ismaily SC - Final Name Merger", layout="wide")
+st.title("🏹 رادار الدراويش: دمج الأسماء مع الطاقات")
 
-st.markdown("""
-### 💡 كيف يعمل؟
-الكود الآن يستخدم **"الخريطة الجينية الحقيقية"** التي اكتشفناها:
-السمات تسبق العمر بمسافات ثابتة (-6 للتحمل، -10 للسرعة، -18 للـ PA/CA).
-""")
+# رفع ملفين: ملف الحفظ الأصلي وملف الـ CSV اللي إنت لسه مطلعه
+col1, col2 = st.columns(2)
+with col1:
+    save_file = st.file_uploader("📂 ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
+with col2:
+    csv_file = st.file_uploader("📄 ارفع ملف CSV اللي استخرجناه", type=["csv"])
 
-uploaded_file = st.file_uploader("📂 ارفع ملف الحفظ (.fms / .dat)", type=["dat", "fms", "sav"])
-
-if uploaded_file:
-    data = uploaded_file.read()
-    raw_bytes = list(data)
-    file_size = len(data)
+if save_file and csv_file:
+    # 1. قراءة البيانات
+    data = save_file.read()
+    df_attributes = pd.read_csv(csv_file)
     
-    if st.button("🚀 استخراج قاعدة بيانات اللاعبين"):
-        players_data = []
+    st.info(f"✅ تم تحميل بيانات {len(df_attributes)} لاعب.")
+
+    if st.button("🔗 ابدأ عملية الربط السحرية"):
+        # 2. استخراج مخزن الأسماء (Name Pool)
+        # المنطقة دي ثابتة غالباً في FM Mobile
+        names_area = data[30000000:45000000] 
+        found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
+        names_pool = [n.decode('ascii', errors='ignore') for n in found_names]
+        names_pool = list(dict.fromkeys(names_pool)) # حذف التكرار
         
-        with st.spinner("جاري حصاد اللاعبين بناءً على الشفرة المكتشفة..."):
-            # البحث عن الفاصل السحري 255, 255, 255, 255
-            magic_sequence = bytes([255, 255, 255, 255])
-            start_pos = 0
-            
-            while True:
-                # العثور على مكان الفاصل
-                idx = data.find(magic_sequence, start_pos)
-                if idx == -1 or idx > 20000000: # نبحث في أول 20 ميجا
-                    break
-                
-                # العنوان اللي بعد الفاصل مباشرة هو "العمر" (Index 0 في خريطتنا)
-                age_idx = idx + 4 
-                
-                if age_idx < len(raw_bytes):
-                    age = raw_bytes[age_idx]
-                    
-                    # فلترة منطقية: العمر لازم يكون بين 15 و 45
-                    if 15 <= age <= 45:
-                        try:
-                            # استخراج البيانات باستخدام الإزاحات (Offsets) اللي اكتشفناها
-                            ca_pa_val = raw_bytes[age_idx - 18]
-                            strength  = raw_bytes[age_idx - 12]
-                            pace      = raw_bytes[age_idx - 10]
-                            stamina   = raw_bytes[age_idx - 6]
-                            
-                            # فلترة إضافية عشان نتأكد إن ده لاعب بجد مش بيانات عشوائية
-                            if ca_pa_val > 50 and pace <= 20 and stamina <= 20 and strength <= 20:
-                                players_data.append({
-                                    "العنوان (Hex)": hex(age_idx),
-                                    "العمر": age,
-                                    "الـ CA/PA": ca_pa_val,
-                                    "القوة": strength,
-                                    "السرعة": pace,
-                                    "التحمل": stamina,
-                                    "بصمة التأكيد": "✅"
-                                })
-                        except IndexError:
-                            pass
-                
-                # تحريك نقطة البحث
-                start_pos = idx + 1
+        st.write(f"🔍 وجدنا {len(names_pool)} اسم في مخزن الأسماء.")
 
-        if players_data:
-            st.success(f"🎉 الله أكبر! تم استخراج بيانات {len(players_data)} لاعب بنجاح!")
-            df = pd.DataFrame(players_data)
-            
-            # ترتيب اللاعبين من الأعلى طاقة للأقل
-            df = df.sort_values(by="الـ CA/PA", ascending=False).reset_index(drop=True)
-            
-            st.dataframe(df, use_container_width=True)
-            
-            # تحميل الملف
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 تحميل قاعدة البيانات (CSV)", csv, "ismaily_fm26_database.csv", "text/csv")
-        else:
-            st.error("لم يتم العثور على بيانات مطابقة. تأكد من الملف.")
+        # 3. المزامنة (The Sync)
+        # هنا التحدي: اللعبة بترتب اللعيبة بنفس ترتيب أساميهم في المخزن
+        # هنحاول نربطهم ونخلي المستخدم يظبط الـ "Shift"
+        
+        shift = st.slider("تعديل المزامنة (Shift Value)", -100, 100, 0)
+        
+        final_list = []
+        # بنفلتر الداتا عشان نشيل القيم الوهمية (زي الـ 255)
+        df_filtered = df_attributes[df_attributes['الـ CA/PA'] <= 200].copy()
+        
+        for i, row in enumerate(df_filtered.itertuples()):
+            name_idx = i + shift
+            if 0 <= name_idx < len(names_pool):
+                final_list.append({
+                    "الاسم المتوقع": names_pool[name_idx],
+                    "العمر": row.العمر,
+                    "الطاقة (PA)": row._3, # الـ CA/PA
+                    "السرعة": row.السرعة,
+                    "التحمل": row.التحمل,
+                    "العنوان": row._1 # العنوان Hex
+                })
 
-st.info("💡 **ملاحظة:** الجدول هيطلع لك كل اللعيبة بأعمارهم وطاقاتهم. خطوتنا الجاية هي دمج الأسامي معاهم، بس خلينا نحتفل بإننا كسرنا التشفير الرقمي الأول!")
-                            
+        if final_list:
+            df_final = pd.DataFrame(final_list)
+            st.success("🎯 تمت عملية الربط! راجع الأسماء مع الأعمار.")
+            st.dataframe(df_final, use_container_width=True)
+            
+            # زر التحميل النهائي
+            csv_final = df_final.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 تحميل كشاف اللعيبة النهائي", csv_final, "ismaily_fm26_full_scout.csv")
+            
