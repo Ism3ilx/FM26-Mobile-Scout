@@ -1,63 +1,84 @@
 import streamlit as st
+import pandas as pd
+import re
 
-st.set_page_config(page_title="Ismaily SC - Player Creator", layout="wide")
-st.title("🏹 رادار الدراويش: محرك إنشاء اللاعبين بالبصمة")
+st.set_page_config(page_title="Ismaily SC - Multi-Match Scout", layout="wide")
+st.title("🏹 رادار الدراويش: البحث بالبصمة الحقيقية")
 
 st.markdown("""
-### 💡 فكرة الكود:
-1. اكتب طاقات لاعب "موجود فعلياً" في فريقك (عشان نلاقي مكانه).
-2. اكتب الطاقات "الجديدة" اللي عايز تحول اللاعب ده ليها.
-3. الكود هيعدل الملف ويطلع لك نسخة جديدة تحمل اللاعب الخارق بتاعك.
+### 💡 كيف يعمل هذا البحث؟
+ادخل بيانات اللاعب كما تراها في اللعبة تماماً، والكود سيبحث عن "تجمع" هذه الأرقام بالقرب من اسم اللاعب في ملف الـ Hex.
 """)
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
-    data = bytearray(uploaded_file.read()) # استخدام bytearray عشان نقدر نعدل
+    data = uploaded_file.read()
+    raw_bytes = list(data)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("🔍 بصمة اللاعب الحالي (للبحث)")
-        old_age = st.number_input("العمر الحالي", value=33)
-        old_pa = st.number_input("الـ PA الحالي", value=173)
-        old_pace = st.number_input("السرعة الحالية", value=11)
-        old_stamina = st.number_input("التحمل الحالي", value=8)
+        st.subheader("👤 بيانات تعريفية")
+        p_name = st.text_input("اسم اللاعب (كما هو مكتوب بالإنجليزية):", value="Courtois")
+        p_age = st.number_input("العمر:", value=33)
 
     with col2:
-        st.subheader("✨ طاقات اللاعب الجديد")
-        new_age = st.number_input("العمر الجديد", value=17)
-        new_pa = st.number_input("الـ PA الجديد (ماكس 200)", value=200)
-        new_pace = st.number_input("السرعة الجديدة", value=20)
-        new_stamina = st.number_input("التحمل الجديد", value=20)
+        st.subheader("⚡ الطاقات (Attributes)")
+        p_pace = st.number_input("السرعة (Pace):", value=11)
+        p_stamina = st.number_input("التحمل (Stamina):", value=8)
+        p_strength = st.number_input("القوة (Strength):", value=14)
 
-    if st.button("🚀 إنشاء اللاعب وحفظ الملف"):
-        # تحويل القيم لتسلسل بايتات (حسب هيكل FM المعتاد)
-        # PA يكون في الأول، ثم بايت غير معروف، ثم العمر، ثم السرعة في بايت 6
+    if st.button("🔍 ابدأ عملية المطابقة"):
+        # 1. البحث عن مكان الاسم
+        name_bytes = p_name.encode('ascii')
+        name_indices = [i for i, _ in enumerate(data) if data.startswith(name_bytes, i)]
         
-        # هنبحث بـ (العمر والـ PA) كبداية لأنهم أضمن
-        found_count = 0
-        for i in range(len(data) - 10):
-            # محاولة مطابقة البصمة (PA ثم بايت عشوائي ثم العمر)
-            if data[i] == old_pa and data[i+2] == old_age:
-                # لو لقينا مطابقة، نحدث البيانات
-                data[i] = new_pa           # تعديل الـ PA
-                data[i+2] = new_age        # تعديل العمر
-                data[i+6] = new_pace       # تعديل السرعة
-                data[i+7] = new_stamina    # تعديل التحمل
-                
-                found_count += 1
-                st.success(f"🎯 تم العثور على اللاعب وتعديله في العنوان: {hex(i)}")
-        
-        if found_count > 0:
-            st.balloons()
-            st.download_button(
-                label="📥 تحميل ملف الحفظ المعدل",
-                data=bytes(data),
-                file_name="ismaily_modded_save.fms",
-                mime="application/octet-stream"
-            )
+        if not name_indices:
+            st.error(f"❌ لم يتم العثور على الاسم '{p_name}' في الملف ككلمة واضحة.")
         else:
-            st.error("❌ لم يتم العثور على لاعب بهذه الطاقات. تأكد من الأرقام بدقة من داخل اللعبة.")
+            st.success(f"✅ تم العثور على الاسم في {len(name_indices)} موقع.")
+            
+            results = []
+            for n_idx in name_indices:
+                # 2. البحث عن "تجمع" الطاقات في محيط 200 بايت قبل وبعد الاسم
+                # FM Mobile غالباً تضع الطاقات قبل الاسم مباشرة أو بعده بمسافة بسيطة
+                search_range = range(n_idx - 150, n_idx + 50)
+                
+                found_in_context = False
+                for i in search_range:
+                    if i < 0 or i + 10 >= len(raw_bytes): continue
+                    
+                    # نبحث عن نمط: (العمر) يليه أو يسبقه (السرعة، التحمل، القوة)
+                    # ملاحظة: المسافات بين الطاقات في الملف قد تكون 1 أو 2 بايت
+                    if raw_bytes[i] == p_age:
+                        # فحص المنطقة المحيطة بالعمر عن باقي الطاقات
+                        context_window = raw_bytes[i-15 : i+15]
+                        if p_pace in context_window and p_stamina in context_window:
+                            found_in_context = True
+                            match_idx = i
+                            break
+                
+                if found_in_context:
+                    results.append({
+                        "الاسم": p_name,
+                        "العنوان (Hex)": hex(match_idx),
+                        "العنوان (Index)": match_idx,
+                        "المنطقة": "محيط الاسم المكتشف",
+                        "قيم قريبة": str(raw_bytes[match_idx-5 : match_idx+10])
+                    })
 
-st.info("⚠️ ملاحظة: يفضل دائماً الاحتفاظ بنسخة احتياطية من ملف السيف الأصلي قبل التعديل.")
+            if results:
+                st.write("### 🎯 المواقع المطابقة للبصمة:")
+                df_res = pd.DataFrame(results)
+                st.table(df_res)
+                
+                # إظهار الـ PA المستخفي
+                st.info("💡 الرقم الذي يسبق 'العمر' مباشرة أو بخطوتين غالباً ما يكون هو الـ PA الذي نبحث عنه.")
+                target_idx = results[0]["العنوان (Index)"]
+                st.write(f"بايتات حول العمر: `{raw_bytes[target_idx-4 : target_idx+6]}`")
+            else:
+                st.warning("⚠️ وجدنا الاسم، لكن لم نجد تجمع الطاقات (العمر والسرعة) بجانبه مباشرة. قد تكون الطاقات مشفرة أو بعيدة.")
+
+st.info("💡 نصيحة: جرب لاعب طاقاته 'فريدة' (أرقام مش متكررة كتير) عشان النتيجة تطلع دقيقة جداً.")
+                    
