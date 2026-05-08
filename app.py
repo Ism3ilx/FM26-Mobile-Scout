@@ -1,62 +1,79 @@
 import streamlit as st
 import pandas as pd
+import re
 
-st.set_page_config(page_title="Ismaily SC - Final Protocol", layout="wide")
-st.title("🏹 بروتوكول فك الحصار النهائي")
+st.set_page_config(page_title="Ismaily SC - Decoder Pro", layout="wide")
+st.title("🏹 رادار الدراويش: كود كسر الشفرة النهائي")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
     data = uploaded_file.read()
+    raw_bytes = list(data)
     
-    st.subheader("🔎 البحث عن بصمة اللاعب بالاسم")
+    st.sidebar.header("🎯 إعدادات البحث")
     player_name = st.text_input("اكتب اسم اللاعب بالانجليزي (مثلاً: Courtois):")
 
     if player_name:
-        # البحث عن الاسم كـ Bytes في الملف
+        # البحث عن مكان الاسم في الملف
         name_bytes = player_name.encode('ascii')
-        start_pos = 0
-        matches = []
+        indices = [i for i, _ in enumerate(data) if data.startswith(name_bytes, i)]
         
-        # هندور على كل الأماكن اللي ظهر فيها الاسم ده
-        while True:
-            idx = data.find(name_bytes, start_pos)
-            if idx == -1: break
-            matches.append(idx)
-            start_pos = idx + 1
-        
-        if matches:
-            st.success(f"✅ تم العثور على اسم {player_name} في {len(matches)} مكان!")
+        if indices:
+            st.success(f"✅ وجدنا اسم {player_name} في {len(indices)} مكان!")
             
-            for m_idx in matches:
-                st.write(f"---")
-                st.write(f"📍 **العنوان المكتشف (Hex):** `{hex(m_idx)}` | **Index:** `{m_idx}`")
+            for idx in indices:
+                st.write(f"### 📍 تحليل العنوان: {hex(idx)}")
                 
-                # تحليل المنطقة المحيطة بالاسم (100 بايت قبل وبعد)
-                # غالباً الطاقات بتكون "قبل" الاسم في ملفات الـ Mobile
-                st.write("📊 تحليل القيم المحيطة (القيم اللي ممكن تكون هي الطاقات):")
+                # إستراتيجية البحث "الخلفي": الطاقات دايماً قبل الاسم في FM Mobile
+                # هنطلع الـ 100 بايت اللي قبل الاسم ونحللهم
+                st.write("🔍 فحص البايتات التي تسبق الاسم (حيث تختبئ الطاقات):")
                 
-                context_data = []
-                # هنعرض 50 بايت قبل الاسم و 50 بعده
-                for i in range(m_idx - 60, m_idx + 20, 1):
+                analysis = []
+                for i in range(idx - 60, idx + 10): # 60 بايت قبل و10 بعد
                     if 0 <= i < len(data):
                         val = data[i]
-                        context_data.append({
-                            "الـ Index": i,
-                            "العنوان (Hex)": hex(i),
-                            "القيمة (Value)": val,
-                            "المسافة من الاسم": i - m_idx
+                        analysis.append({
+                            "Index": i,
+                            "Hex": hex(i),
+                            "Value": val,
+                            "Distance": i - idx
                         })
                 
-                df_context = pd.DataFrame(context_data)
-                st.dataframe(df_context.T) # عرض بالعرض عشان سهولة القراءة
+                df_ana = pd.DataFrame(analysis)
+                # عرض البيانات بشكل أفقي لسهولة العثور على البصمة
+                st.dataframe(df_ana.T, use_container_width=True)
                 
-                # استخراج القيم المحتملة (لو لقيت 33 و 11 و 8 قريبين من بعض)
-                potential_stats = [d['القيمة (Value)'] for d in context_data]
-                st.write(f"🔍 **قيم البحث السريع في هذه المنطقة:** `{potential_stats}`")
+                # محاولة ذكية لاستخراج طاقات اللاعب من هذه المنطقة
+                vals = [d['Value'] for d in analysis]
+                st.info(f"💡 بصمة المنطقة دي: {vals}")
+                
         else:
-            st.error("الاسم ده مش موجود في ملف الحفظ بصيغة النص. ده معناه إن الأسماء مشفرة كمان!")
+            st.error("الاسم ده مش موجود كـ 'نص' واضح، جرب اسم لاعب تاني أو اسم فريقك.")
 
     st.write("---")
-    st.info("💡 **الخطة دلوقتي:** اكتب اسم لاعب 'نادر' عندك في الفريق مش متكرر، وشوف الجدول اللي هيطلع. لو لقيت أرقام طاقاته (عمره، سرعته) موجودة في الجدول 'قبل' الاسم بمسافة معينة، يبقى إحنا مسكنا الشفرة خلاص.")
+    st.subheader("📋 كاشف المواهب الشامل (Global Scout)")
+    st.write("بناءً على العناوين اللي اكتشفناها في ملفاتك السابقة:")
     
+    # محاولة جرد سريعة بناءً على نمط "العمر + PA"
+    scout_list = []
+    for i in range(1000, 15000000, 4):
+        pa = raw_bytes[i]
+        if 150 <= pa <= 200: # لعيبة سوبر
+            age = raw_bytes[i+2]
+            if 15 <= age <= 21: # مواهب صغيرة
+                scout_list.append({
+                    "Address": hex(i),
+                    "Potential (PA)": pa,
+                    "Age": age,
+                    "Speed": raw_bytes[i+6],
+                    "Stamina": raw_bytes[i+7]
+                })
+    
+    if scout_list:
+        df_scout = pd.DataFrame(scout_list).drop_duplicates(subset=['Address'])
+        st.dataframe(df_scout.head(100), use_container_width=True)
+        
+        csv = df_scout.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 تحميل قائمة الـ 100 موهبة (CSV)", csv, "ismaily_scout_final.csv")
+                        
