@@ -1,83 +1,116 @@
 import streamlit as st
 import pandas as pd
+import re
 
-st.set_page_config(page_title="Ismaily SC - Attribute Hunter", layout="wide")
-st.title("🏹 رادار الدراويش: الماسح العالمي للسمات")
-
+st.set_page_config(page_title="محلل إزاحات FM26", layout="wide")
+st.title("🧪 أداة تجربة الإزاحات لملفات FM26")
 st.markdown("""
-### 💡 فكرة البحث:
-أدخل أرقام السمات التي تراها في اللعبة (مثل عمر كورتوا وسرعته وقوته)، وسيقوم الكود بفحص الملف بالكامل للعثور على أي منطقة تحتوي على هذه الأرقام متقاربة.
+ارفع ملف حفظ `.fms` أو `.dat` واستخدم أشرطة التمرير لتجربة إزاحات مختلفة
+حتى تحصل على بيانات لاعبين منطقية. القيم الافتراضية هي من الكود الأصلي.
 """)
 
-uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
+uploaded_file = st.file_uploader("📂 ارفع ملف الحفظ", type=["dat", "fms", "sav"])
 
+# ------------------- إعدادات الإزاحة -------------------
+with st.sidebar:
+    st.header("⚙️ إعدادات الإزاحة")
+    st.markdown("عدّل القيم حتى تظهر بيانات صحيحة.")
+
+    # نطاق البحث عن العمر داخل السجل
+    age_search_start = st.number_input("بداية البحث عن العمر (بايت)", value=80, min_value=0, max_value=200)
+    age_search_end   = st.number_input("نهاية البحث عن العمر (بايت)", value=140, min_value=0, max_value=200)
+
+    # الإزاحة النسبية لـ CA و PA من موقع العمر
+    ca_offset = st.slider("إزاحة CA (نسبة لموقع العمر)", min_value=-50, max_value=50, value=-12)
+    pa_offset = st.slider("إزاحة PA (نسبة لموقع العمر)", min_value=-50, max_value=50, value=-10)
+
+    # إزاحات السمات البدنية
+    pace_offset    = st.slider("إزاحة السرعة (Pace)", min_value=-20, max_value=50, value=18)
+    stamina_offset = st.slider("إزاحة التحمل (Stamina)", min_value=-20, max_value=50, value=19)
+    strength_offset= st.slider("إزاحة القوة (Strength)", min_value=-20, max_value=50, value=20)
+
+    # طول السجل حول الاسم
+    record_length  = st.number_input("طول السجل حول الاسم (بايت)", value=220, min_value=100, max_value=500)
+
+    # الحد الأدنى لقبول PA
+    min_pa = st.slider("الحد الأدنى لـ PA", min_value=0, max_value=200, value=110)
+
+# ------------------- معالجة الملف -------------------
 if uploaded_file:
-    # قراءة الملف ككتلة واحدة لسرعة البحث
     data = uploaded_file.read()
-    raw_bytes = list(data)
-    file_size = len(data)
-    
-    st.sidebar.header("🎯 البصمة المستهدفة")
-    target_age = st.sidebar.number_input("العمر المكتوب في اللعبة:", value=32)
-    
-    st.sidebar.subheader("📊 السمات المرئية")
-    # يمكنك إضافة أي سمات أخرى هنا لزيادة دقة البحث
-    s_pace = st.sidebar.number_input("السرعة (Pace):", value=11)
-    s_stam = st.sidebar.number_input("التحمل (Stamina):", value=8)
-    s_stre = st.sidebar.number_input("القوة (Strength):", value=14)
-    s_accel = st.sidebar.number_input("التسارع (Acceleration):", value=11)
 
-    if st.button("🚀 ابدأ مسح الملف بالكامل"):
-        results = []
-        # نحدد نطاق البحث (غالباً أول 20 ميجا من الملف)
-        search_limit = min(file_size, 20000000)
-        
-        with st.spinner("جاري فحص الملايين من البايتات..."):
-            # القفز بمقدار 4 بايتات لتسريع العملية (نمط اللعبة)
-            for i in range(1000, search_limit, 4):
-                # إذا وجدنا العمر في هذا البايت
-                if raw_bytes[i] == target_age:
-                    # نفحص المنطقة المحيطة (نطاق 25 بايت) هل تحتوي على باقي السمات؟
-                    window = raw_bytes[max(0, i-15) : min(len(raw_bytes), i+20)]
-                    
-                    # شرط المطابقة: يجب أن توجد كل هذه السمات في نفس المنطقة
-                    if s_pace in window and s_stam in window and s_stre in window and s_accel in window:
-                        results.append({
-                            "Index": i,
-                            "العنوان (Hex)": hex(i),
-                            "البصمة المكتشفة": str(window)
-                        })
-                
-                # إيقاف البحث إذا وجدنا نتائج كثيرة جداً لحماية المتصفح
-                if len(results) > 50: break
+    # نمط البحث عن الأسماء (معدّل ليشمل حالات أوسع)
+    # يمكن تعديله يدويًا إذا كانت الأسماء بتنسيق مختلف
+    player_pattern = re.compile(b"([A-Z][a-zA-Z\x80-\xff]{1,15}\s[A-Z][a-zA-Z\x80-\xff]{1,15})")
 
-        if results:
-            st.success(f"🎯 تم العثور على {len(results)} منطقة تطابق هذه السمات!")
-            df_results = pd.DataFrame(results)
-            st.table(df_results)
-            
-            # تحليل هيكل أول نتيجة وجدناها
-            st.write("### 🔬 التشريح الرقمي للاعب المكتشف:")
-            match_idx = results[0]["Index"]
-            structure = []
-            for offset in range(-15, 25):
-                curr_idx = match_idx + offset
-                structure.append({
-                    "الإزاحة (Offset)": offset,
-                    "القيمة": raw_bytes[curr_idx],
-                    "Hex": hex(raw_bytes[curr_idx]),
-                    "ملاحظة": "العمر المستهدف" if offset == 0 else ""
-                })
-            st.dataframe(pd.DataFrame(structure).T)
-            
-            st.info("💡 انظر للقيمة التي تسبق 'العمر' بمسافة ثابتة (غالباً خطوتين أو أربعة)، ستجد الـ PA الخاص باللاعب.")
-        else:
-            st.error("❌ لم نجد هذا التجمع من الأرقام في الملف. تأكد من إدخال الأرقام بدقة كما هي في اللعبة.")
+    results = []
+    seen_offsets = set()
 
-st.markdown("""
-### 📝 لماذا هذا الكود أفضل؟
-1. **شامل:** يمسح الملف بالكامل دون الحاجة لمعرفة مكان الأسماء.
-2. **مرن:** يمكنك البحث بسمتين أو عشر سمات لتقليل النتائج العشوائية.
-3. **كاشف:** بمجرد أن تجد "البلوك" الخاص باللاعب، ستعرف أماكن السمات المخفية (مثل PA و CA) لأنها ستكون دائماً في نفس المسافة من العمر.
-""")
-                    
+    for match in player_pattern.finditer(data):
+        start_offset = match.start()
+        try:
+            name = match.group(1).decode('latin-1').strip()
+        except:
+            continue
+
+        if len(name) < 8 or start_offset in seen_offsets:
+            continue
+
+        if start_offset + record_length > len(data):
+            continue
+
+        record = list(data[start_offset : start_offset + record_length])
+
+        # البحث عن العمر
+        age = None
+        age_idx = -1
+        for i in range(age_search_start, min(age_search_end, len(record))):
+            if 16 <= record[i] <= 42:
+                # تحقق من وجود 0 في الخلية المجاورة (علامة شائعة على قيمة منفردة)
+                if (i+1 < len(record) and record[i+1] == 0) or (i-1 >= 0 and record[i-1] == 0):
+                    age = record[i]
+                    age_idx = i
+                    break
+
+        if age is None or age_idx == -1:
+            continue
+
+        # استخراج القيم باستخدام الإزاحات الحالية
+        ca_candidate = record[age_idx + ca_offset] if 0 <= age_idx + ca_offset < len(record) else 0
+        pa_candidate = record[age_idx + pa_offset] if 0 <= age_idx + pa_offset < len(record) else 0
+        pace     = record[age_idx + pace_offset]     if 0 <= age_idx + pace_offset     < len(record) else 0
+        stamina  = record[age_idx + stamina_offset]  if 0 <= age_idx + stamina_offset  < len(record) else 0
+        strength = record[age_idx + strength_offset] if 0 <= age_idx + strength_offset < len(record) else 0
+
+        # تصحيح القيم
+        pa = pa_candidate if min_pa <= pa_candidate <= 200 else 0
+        ca = ca_candidate if 100 <= ca_candidate <= 200 else (pa - 10 if pa > 0 else 0)
+
+        if pa > 0:  # قبلنا أي PA أعلى من الصفر لتجربة أوسع
+            results.append({
+                "الاسم": name,
+                "العمر": age,
+                "السرعة": pace if 1 <= pace <= 20 else None,
+                "التحمل": stamina if 1 <= stamina <= 20 else None,
+                "القوة": strength if 1 <= strength <= 20 else None,
+                "CA": ca,
+                "PA": pa,
+            })
+            seen_offsets.add(start_offset)
+
+    if results:
+        df = pd.DataFrame(results).drop_duplicates(subset=['الاسم', 'العمر'])
+
+        # فلترة حسب الاسم
+        search = st.text_input("🔍 بحث بالاسم")
+        if search:
+            df = df[df['الاسم'].str.contains(search, case=False)]
+
+        st.success(f"تم اكتشاف {len(df)} لاعبًا باستخدام الإزاحات الحالية.")
+        st.dataframe(df, use_container_width=True)
+
+        # تنزيل CSV للتجربة
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 تحميل CSV", csv, "extracted_players.csv", "text/csv")
+    else:
+        st.warning("لم يتم العثور على أي لاعبين. جرّب تغيير الإزاحات أو رفع ملف آخر.")
