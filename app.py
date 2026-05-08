@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Final Decoder", layout="wide")
-st.title("🏹 رادار الدراويش: فك التشفير بالبصمة المدريدية")
+st.set_page_config(page_title="Ismaily SC - Real Madrid Sync", layout="wide")
+st.title("🏹 رادار الدراويش: فك تشفير ريال مدريد")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
@@ -11,82 +11,79 @@ if uploaded_file:
     data = uploaded_file.read()
     raw_bytes = list(data)
     
-    # 1. استخراج مخزن الأسماء (String Pool)
-    # البحث عن الأسماء في المنطقة الكثيفة (30MB - 45MB)
+    # 1. جرد مخزن الأسماء
+    st.sidebar.info("جاري سحب الأسماء...")
     names_area = data[30000000:45000000]
     names_pool = re.findall(b"[A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,15})?", names_area)
     names_pool = [n.decode('ascii', errors='ignore') for n in names_pool]
-    names_pool = list(dict.fromkeys(names_pool)) # تنظيف وتجهيز القائمة
+    names_pool = list(dict.fromkeys(names_pool))
 
-    # 2. استخراج الطاقات بنظام الـ Blocks
-    # البحث عن بصمة كورتوا (عمر 33، سرعة 11، تحمل 8، قوة 14)
-    st.info("🔍 جاري البحث عن بصمة 'Thibaut Courtois' لمعايرة الرادار...")
+    # 2. البحث عن الثلاثي (كورتوا - دياز - إندريك)
+    # كورتوا: 33 سنة، 11 سرعة، 8 تحمل، 14 قوة
+    # دياز: 25 سنة، 14 سرعة، 12 تحمل، 7 قوة
+    # إندريك: 19 سنة، 15 سرعة، 14 تحمل، 15 قوة
     
     player_data = []
-    # فحص شامل لأول 15 مليون بايت (منطقة بيانات اللاعبين)
-    for i in range(1000, 15000000, 4):
-        pa = raw_bytes[i]
-        if 130 <= pa <= 200:
-            age = raw_bytes[i+2]
-            pace = raw_bytes[i+6]
-            stamina = raw_bytes[i+7]
-            strength = raw_bytes[i+8]
+    found_courtois_idx = -1
+    
+    for i in range(1000, 15000000, 1):
+        # البحث عن بصمة كورتوا الدقيقة
+        if raw_bytes[i+2] == 33 and raw_bytes[i+6] == 11 and raw_bytes[i+7] == 8 and raw_bytes[i+8] == 14:
+            found_courtois_idx = i
+            st.success(f"🎯 تم قنص كورتوا في العنوان: {hex(i)}")
+            break
             
-            # التحقق من المنطقية
-            if 15 <= age <= 40 and 5 <= pace <= 20:
-                player_data.append({
-                    "PA": pa, "Age": age, "Pace": pace, 
-                    "Stamina": stamina, "Strength": strength, "Offset": i
-                })
+    # استخراج اللاعبين بناءً على نقطة كورتوا
+    search_start = found_courtois_idx if found_courtois_idx != -1 else 1000
+    
+    for i in range(search_start, 15000000, 48): # 48 بايت هو متوسط حجم بيانات اللاعب الواحد في FM Mobile
+        if i + 10 > len(raw_bytes): break
+        pa = raw_bytes[i]
+        age = raw_bytes[i+2]
+        if 15 <= age <= 40 and 130 <= pa <= 200:
+            player_data.append({
+                "PA": pa, "العمر": age, 
+                "السرعة": raw_bytes[i+6], "التحمل": raw_bytes[i+7], 
+                "القوة": raw_bytes[i+8], "Offset": i
+            })
 
-    if player_data and names_pool:
-        df_players = pd.DataFrame(player_data).drop_duplicates(subset=['Offset'])
+    if player_data:
+        df_players = pd.DataFrame(player_data)
         
-        # 3. المزامنة الآلية (Auto-Sync)
-        # البحث عن موقع كورتوا في البيانات المستخرجة
-        # بصمة كورتوا: العمر 33، السرعة 11
-        courtois_matches = df_players[(df_players['Age'] == 33) & (df_players['Pace'] == 11)]
+        # المزامنة مع الأسماء (كورتوا لازم يقابل اسمه)
+        st.sidebar.header("⚙️ ضبط يدوي")
+        shift = st.sidebar.number_input("لو الأسماء مش مظبوطة غير الـ Shift", value=0)
         
-        st.sidebar.header("⚙️ لوحة التحكم")
-        if not courtois_matches.empty:
-            # حساب الـ Shift التلقائي لجعل كورتوا يظهر في مكانه
-            auto_shift = -(courtois_matches.index[0]) 
-            st.sidebar.success(f"✅ تم اكتشاف البصمة! المزامنة الآلية: {auto_shift}")
-        else:
+        # محاولة البحث عن "Thibaut Courtois" في الأسماء لعمل auto-shift
+        try:
+            courtois_name_idx = names_pool.index("Thibaut Courtois")
+            auto_shift = courtois_name_idx
+            st.sidebar.write(f"المقترح لضبط كورتوا: {auto_shift}")
+        except:
             auto_shift = 0
-            st.sidebar.warning("⚠️ لم يتم رصد البصمة آلياً، استخدم التعديل اليدوي.")
-
-        shift = st.sidebar.number_input("تعديل يدوي للترتيب (Shift)", value=int(auto_shift))
 
         final_results = []
         for idx, row in enumerate(df_players.itertuples()):
-            name_idx = idx + shift
+            name_idx = idx + shift + auto_shift
             if 0 <= name_idx < len(names_pool):
                 final_results.append({
                     "الاسم": names_pool[name_idx],
-                    "PA (الموهبة)": row.PA,
-                    "العمر": row.Age,
-                    "السرعة": row.Pace,
-                    "التحمل": row.Stamina,
-                    "القوة": row.Strength,
-                    "العنوان (Hex)": hex(row.Offset)
+                    "PA": row.PA,
+                    "العمر": row.العمر,
+                    "السرعة": row.الالسرعة,
+                    "التحمل": row.التحمل,
+                    "القوة": row.القوة
                 })
-
+        
         final_df = pd.DataFrame(final_results)
         
-        # عرض "الثلاثي المدريدي" للتأكد
-        st.subheader("🏁 فحص الجودة (Target: Real Madrid)")
-        targets = ["Courtois", "Diaz", "Endrick"]
-        check_df = final_df[final_df['الاسم'].str.contains('|'.join(targets), case=False)]
-        st.table(check_df)
-
-        # عرض قائمة الجواهر (المواهب)
-        st.subheader("💎 كشف مواهب العالم")
-        # تصفية لعرض اللعيبة تحت 21 سنة بـ PA عالي
-        wonderkids = final_df[(final_df['العمر'] <= 21) & (final_df['PA (الموهبة)'] >= 170)]
-        st.dataframe(wonderkids.sort_values(by="PA (الموهبة)", ascending=False), use_container_width=True)
-
-        # زر التحميل
-        csv = final_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل التقرير الذهبي", csv, "ismaily_golden_scout.csv", "text/csv")
+        # عرض الثلاثي للتأكد
+        st.subheader("📊 فحص مطابقة ريال مدريد")
+        st.table(final_df.head(10)) # المفروض أول 3 يكونوا كورتوا ودياز وإندريك
         
+        st.subheader("💎 كشف مواهب العالم")
+        st.dataframe(final_df[final_df['PA'] >= 180].sort_values(by="PA", ascending=False))
+        
+        csv = final_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 تحميل التقرير النهائي", csv, "ismaily_final_real_sync.csv", "text/csv")
+                    
