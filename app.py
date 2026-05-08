@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+import re
 
-st.set_page_config(page_title="Ismaily SC - Ultimate Scout", layout="wide")
-st.title("🏹 كشاف الإسماعيلي: النسخة النهائية المعتمدة")
+st.set_page_config(page_title="Ismaily SC - Mega Scout", layout="wide")
+st.title("🏹 كشاف الإسماعيلي: الرادار الشامل (أرقام + أسماء)")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
@@ -11,48 +12,53 @@ if uploaded_file:
     raw_bytes = list(data)
     results = []
     
-    # المسح الشامل للملف للبحث عن "بصمة اللاعب"
-    # البصمة: PA متبوع بعمر متبوع بـ 3 مهارات بمسافات محددة
-    for i in range(10, len(raw_bytes) - 20):
+    # 1. البحث عن الطاقات (النمط اللي نجحنا فيه)
+    for i in range(1000, len(raw_bytes) - 50):
         pa = raw_bytes[i]
-        # 1. التأكد من وجود PA منطقي (100-200)
-        if 100 <= pa <= 200:
-            # 2. التأكد من وجود العمر في مكانه الصحيح (بعد الـ PA بـ 2 بايت)
+        if 150 <= pa <= 200: # بنبحث عن المواهب العالية فقط
             age = raw_bytes[i+2]
-            if 15 <= age <= 45:
-                # 3. استخراج المهارات بناءً على تصحيح الترحيل (Pace=i+6, Stamina=i+7, Strength=i+8)
+            if 15 <= age <= 40:
                 pace = raw_bytes[i+6]
                 stamina = raw_bytes[i+7]
                 strength = raw_bytes[i+8]
                 
-                # فحص منطقية المهارات (1-20) لضمان عدم قراءة بيانات عشوائية
-                if 1 <= pace <= 20 and 1 <= stamina <= 20 and 1 <= strength <= 20:
-                    # الـ CA غالباً قبل الـ PA بـ 2 بايت
-                    ca = raw_bytes[i-2] if i-2 >= 0 else 0
+                # التأكد إنها بيانات لاعب (المهارات بين 1 و 20)
+                if 5 <= pace <= 20 and 5 <= stamina <= 20:
                     
+                    # 2. محاولة إيجاد اسم اللاعب (البحث عن نص قريب قبل الإزاحة)
+                    player_name = "Unknown"
+                    # نبحث في الـ 300 بايت اللي قبل الـ PA عن أي نص انجليزي
+                    search_area = data[max(0, i-300):i]
+                    names = re.findall(b"[A-Z][a-z]{2,15}(?:\s[A-Z][a-z]{2,15})?", search_area)
+                    if names:
+                        try:
+                            player_name = names[-1].decode('latin-1')
+                        except:
+                            pass
+
                     results.append({
+                        "الاسم المتوقع": player_name,
                         "الـ PA": pa,
                         "العمر": age,
                         "السرعة": pace,
                         "التحمل": stamina,
                         "القوة": strength,
-                        "الـ CA": ca,
                         "الموقع (ID)": i
                     })
 
     if results:
-        # ترتيب النتائج بالأقوى (PA) وحذف التكرار
-        df = pd.DataFrame(results).drop_duplicates(subset=['الـ PA', 'العمر', 'السرعة', 'الموقع (ID)'])
-        top_df = df[df['الـ PA'] >= 150].sort_values(by="الـ PA", ascending=False)
+        df = pd.DataFrame(results).drop_duplicates(subset=['الموقع (ID)'])
+        # ترتيب حسب القوة (PA)
+        top_df = df.sort_values(by="الـ PA", ascending=False)
         
-        st.success(f"✅ مبروك! وجدنا {len(top_df)} لاعب ببيانات دقيقة ومطابقة للعبة.")
-        st.write("ملاحظة: الأسماء موجودة في جزء منفصل من الملف (String Pool)، حالياً يمكنك تمييز اللاعبين بالعمر والـ PA.")
+        st.success(f"🎯 رادار الدراويش رصد {len(top_df)} موهبة!")
+        st.write("ملاحظة: إذا ظهر الاسم 'Unknown'، يمكنك البحث في اللعبة عن لاعب بنفس العمر والسرعة والـ PA.")
         
         st.dataframe(top_df, use_container_width=True)
         
-        # تصدير الملف النهائي
+        # تحميل الملف
         csv = top_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل كشف المواهب النهائي", csv, "ismaily_ultimate_scout.csv", "text/csv")
+        st.download_button("📥 تحميل قائمة المواهب", csv, "ismaily_scout_names.csv", "text/csv")
     else:
-        st.error("⚠️ لم نجد لاعبين. تأكد من رفع ملف Save Game صحيح.")
-            
+        st.error("⚠️ لم يتم العثور على بيانات. تأكد من أن الملف هو Save Game للنسخة الصحيحة.")
+                    
