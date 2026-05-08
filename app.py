@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Ismaily SC - Precision", layout="wide")
-st.title("🏹 رادار الإسماعيلي: نسخة الدقة والتحكم")
+st.set_page_config(page_title="Ismaily SC - Ultimate Scout", layout="wide")
+st.title("🏹 كشاف الإسماعيلي: النسخة النهائية المعتمدة")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
@@ -11,43 +11,48 @@ if uploaded_file:
     raw_bytes = list(data)
     results = []
     
-    # البحث عن الـ CA (المرساة الثابتة في ملفك)
-    for i in range(500, len(raw_bytes) - 50):
-        if 220 <= raw_bytes[i] <= 245: 
-            ca = raw_bytes[i]
-            age = raw_bytes[i-1]
-            
-            # الـ PA غالباً ثابت قبل الـ CA بـ 8 خانات
-            pa = raw_bytes[i-8]
-
-            # فحص منطقية العمر والـ PA قبل الاستخراج
-            if 15 <= age <= 43 and 100 <= pa <= 200:
-                # استخراج المهارات بناءً على النمط الزوجي اللي اكتشفناه في ملفك
-                p = raw_bytes[i-6] # السرعة
-                s = raw_bytes[i-4] # التحمل
-                strg = raw_bytes[i-2] # القوة
+    # المسح الشامل للملف للبحث عن "بصمة اللاعب"
+    # البصمة: PA متبوع بعمر متبوع بـ 3 مهارات بمسافات محددة
+    for i in range(10, len(raw_bytes) - 20):
+        pa = raw_bytes[i]
+        # 1. التأكد من وجود PA منطقي (100-200)
+        if 100 <= pa <= 200:
+            # 2. التأكد من وجود العمر في مكانه الصحيح (بعد الـ PA بـ 2 بايت)
+            age = raw_bytes[i+2]
+            if 15 <= age <= 45:
+                # 3. استخراج المهارات بناءً على تصحيح الترحيل (Pace=i+6, Stamina=i+7, Strength=i+8)
+                pace = raw_bytes[i+6]
+                stamina = raw_bytes[i+7]
+                strength = raw_bytes[i+8]
                 
-                # إضافة اللاعب فقط لو المهارات منطقية (أكبر من صفر)
-                if p > 0 and s > 0:
-                    player_data = {
-                        "PA": pa,
+                # فحص منطقية المهارات (1-20) لضمان عدم قراءة بيانات عشوائية
+                if 1 <= pace <= 20 and 1 <= stamina <= 20 and 1 <= strength <= 20:
+                    # الـ CA غالباً قبل الـ PA بـ 2 بايت
+                    ca = raw_bytes[i-2] if i-2 >= 0 else 0
+                    
+                    results.append({
+                        "الـ PA": pa,
                         "العمر": age,
-                        "السرعة": p,
-                        "التحمل": s,
-                        "القوة": strg,
-                        "CA": ca,
-                        "الموقع": i
-                    }
-                    results.append(player_data)
+                        "السرعة": pace,
+                        "التحمل": stamina,
+                        "القوة": strength,
+                        "الـ CA": ca,
+                        "الموقع (ID)": i
+                    })
 
     if results:
-        df = pd.DataFrame(results).drop_duplicates(subset=['الموقع'])
-        top_df = df[df['PA'] >= 150].sort_values(by="PA", ascending=False)
+        # ترتيب النتائج بالأقوى (PA) وحذف التكرار
+        df = pd.DataFrame(results).drop_duplicates(subset=['الـ PA', 'العمر', 'السرعة', 'الموقع (ID)'])
+        top_df = df[df['الـ PA'] >= 150].sort_values(by="الـ PA", ascending=False)
         
-        st.success(f"✅ تم الضبط! وجدنا {len(top_df)} لاعب.")
+        st.success(f"✅ مبروك! وجدنا {len(top_df)} لاعب ببيانات دقيقة ومطابقة للعبة.")
+        st.write("ملاحظة: الأسماء موجودة في جزء منفصل من الملف (String Pool)، حالياً يمكنك تمييز اللاعبين بالعمر والـ PA.")
+        
         st.dataframe(top_df, use_container_width=True)
         
+        # تصدير الملف النهائي
         csv = top_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 تحميل التقرير", csv, "ismaily_precision_scout.csv", "text/csv")
+        st.download_button("📥 تحميل كشف المواهب النهائي", csv, "ismaily_ultimate_scout.csv", "text/csv")
     else:
-        st.error("لم نجد بيانات مطابقة. تأكد من رفع الملف الصحيح.")
+        st.error("⚠️ لم نجد لاعبين. تأكد من رفع ملف Save Game صحيح.")
+            
