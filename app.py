@@ -2,94 +2,110 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ismaily SC - Ultimate Decoder", layout="wide")
-st.title("🏹 مفكك شفرات FM26: نسخة استخراج البيانات الكاملة")
+st.set_page_config(page_title="Ismaily SC - Triple Sync Decoder", layout="wide")
+st.title("🏹 رادار الدراويش: مفكك شفرة الثلاثي الملكي")
 
 uploaded_file = st.file_uploader("ارفع ملف الحفظ (.fms)", type=["fms", "dat"])
 
 if uploaded_file:
     data = uploaded_file.read()
+    raw_bytes = list(data)
     file_size = len(data)
-    
-    # 1. جلب مخزن الأسماء (String Pool)
-    # بنجيب كل اللي شبه الأسامي من بعد 30 مليون بايت
+
+    # 1. استخراج الأسماء (المخزن الرئيسي)
     st.sidebar.info("🔍 جاري جرد مخزن الأسماء...")
+    # بنركز على المنطقة اللي دايما فيها الأسماء (من 30MB لـ 45MB)
     names_area = data[30000000:45000000]
-    raw_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
-    names_pool = [n.decode('ascii', errors='ignore') for n in raw_names]
-    # تنظيف الأسماء من الكلمات العامة
-    exclude = ['Madrid', 'Paris', 'League', 'City', 'United', 'Club', 'Stadium']
-    names_pool = [n for n in names_pool if n not in exclude]
+    found_names = re.findall(b"[A-Z][a-z]{3,15}(?:\s[A-Z][a-z]{3,15})?", names_area)
+    names_pool = [n.decode('ascii', errors='ignore') for n in found_names]
+    # تنظيف الأسماء من الكلمات اللي مش لعيبة
+    trash = ['Madrid', 'Paris', 'League', 'City', 'United', 'Club', 'Stadium', 'Division']
+    names_pool = [n for n in names_pool if n not in trash]
     names_pool = list(dict.fromkeys(names_pool))
 
-    # 2. استخراج كتل بيانات اللاعبين (Attributes Blocks)
-    st.info("📡 جاري مسح كتل البيانات...")
-    player_blocks = []
+    # 2. إدخال بيانات "الثلاثي" للمعايرة
+    st.sidebar.header("🎯 بيانات المعايرة (من اللعبة)")
+    st.sidebar.write("ادخل طاقات اللاعبين كما تظهر في اللعبة:")
     
-    # مسح منطقة الطاقات (عادة من 1MB لـ 15MB)
+    # كورتوا (كحارس مرمى طاقاته بتختلف في الترتيب أحياناً)
+    c_age = st.sidebar.number_input("عمر كورتوا", value=33)
+    c_pace = st.sidebar.number_input("سرعة كورتوا", value=11)
+    
+    # فالفيردي
+    v_age = st.sidebar.number_input("عمر فالفيردي", value=27)
+    v_pace = st.sidebar.number_input("سرعة فالفيردي", value=17)
+
+    # 3. البحث عن "البصمة الجماعية"
+    st.info("📡 جاري البحث عن ترتيب (كورتوا -> فالفيردي -> كرفخال)...")
+    
+    player_data = []
+    # المسافة التقريبية بين اللاعب والتاني في FM Mobile هي 48 أو 52 بايت
+    # هنمشي بمسح شامل لأول 15 مليون بايت
     for i in range(1000, 15000000, 4):
-        pa = data[i]
-        if 130 <= pa <= 200: # بنركز على اللعيبة القوية بس
-            age = data[i+2]
+        pa = raw_bytes[i]
+        if 130 <= pa <= 200: # أي لاعب بموهبة عالية
+            age = raw_bytes[i+2]
             if 15 <= age <= 40:
-                # بنسحب بلوك 20 بايت عشان نضمن إننا جبنا كل الطاقات
-                block_hex = data[i:i+20].hex()
-                player_blocks.append({
+                pace = raw_bytes[i+6]
+                stamina = raw_bytes[i+7]
+                player_data.append({
                     "PA": pa,
                     "العمر": age,
+                    "السرعة": pace,
+                    "التحمل": stamina,
                     "العنوان (Hex)": hex(i),
-                    "البصمة (Raw)": block_hex,
-                    "Index": len(player_blocks)
+                    "Offset": i
                 })
 
-    if player_blocks:
-        df_blocks = pd.DataFrame(player_blocks)
+    if player_data:
+        df_players = pd.DataFrame(player_data).drop_duplicates(subset=['العنوان (Hex)'])
         
-        st.sidebar.header("⚙️ لوحة المعايرة")
-        shift = st.sidebar.number_input("تحريك الأسماء (Shift)", value=0, step=1)
+        # 4. المزامنة والتحكم
+        st.sidebar.header("⚙️ المزامنة النهائية")
+        shift = st.sidebar.number_input("تحريك الأسماء (Shift)", value=0)
         
-        # 3. عملية الربط (The Sync)
-        final_data = []
-        for idx, row in enumerate(df_blocks.itertuples()):
-            name_idx = idx + shift
-            if 0 <= name_idx < len(names_pool):
-                # فك تشفير الطاقات (بناءً على ملفك الأخير)
-                # السرعة غالباً هي البايت رقم 6 أو 10 في البلوك
-                raw = bytes.fromhex(row._4) # البصمة الخام
-                pace = raw[6] if len(raw) > 6 else 0
-                stamina = raw[7] if len(raw) > 7 else 0
-                
-                final_data.append({
-                    "الاسم": names_pool[name_idx],
-                    "PA": row.PA,
+        # محاولة ذكية لإيجاد كورتوا
+        courtois_idx = df_players[(df_players['العمر'] == c_age) & (df_players['السرعة'] == c_pace)].index
+        auto_shift = 0
+        if not courtois_idx.empty and "Thibaut Courtois" in names_pool:
+            auto_shift = names_pool.index("Thibaut Courtois") - courtois_idx[0]
+            st.sidebar.success(f"💡 مقترح المزامنة: {auto_shift}")
+
+        final_results = []
+        applied_shift = shift + auto_shift
+        
+        for idx, row in enumerate(df_players.itertuples()):
+            n_idx = idx + applied_shift
+            if 0 <= n_idx < len(names_pool):
+                final_results.append({
+                    "الاسم المتوقع": names_pool[n_idx],
+                    "PA (الموهبة)": row.PA,
                     "العمر": row.العمر,
-                    "السرعة المتوقعة": pace if pace <= 20 else "N/A",
-                    "العنوان": row._3
+                    "السرعة": row.السرعة,
+                    "التحمل": row.التحمل,
+                    "العنوان": row._5
                 })
 
-        final_df = pd.DataFrame(final_data)
-        
-        # عرض البيانات
-        st.subheader("📋 البيانات المستخرجة (قبل التحميل)")
-        st.write("استخدم خانة البحث تحت عشان تلاقي كورتوا وتعرف الـ Shift المظبوط كام.")
-        
-        search_name = st.text_input("🔍 ابحث عن اسم لاعب (مثل Courtois):")
-        if search_name:
-            match = final_df[final_df['الاسم'].str.contains(search_name, case=False)]
-            st.table(match)
-            if not match.empty:
-                st.success("لو لقيت الاسم راكب على العمر الصح، يبقى التحميل جاهز!")
+        final_df = pd.DataFrame(final_results)
 
+        # 5. عرض النتائج والتحميل
+        st.subheader("✅ معايرة الثلاثي الملكي")
+        # فحص وجود الثلاثة
+        targets = ["Courtois", "Valverde", "Carvajal"]
+        check_df = final_df[final_df['الاسم المتوقع'].str.contains('|'.join(targets), case=False)]
+        st.table(check_df)
+
+        st.subheader("💎 كافة البيانات المفككة")
         st.dataframe(final_df, use_container_width=True)
 
-        # 4. زر التحميل السحري
+        # زر التحميل الشامل
         csv = final_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="📥 تحميل البيانات المفككة بالكامل (CSV)",
+            label="📥 تحميل كافة البيانات المستخرجة (CSV)",
             data=csv,
-            file_name="ismaily_decoded_data.csv",
+            file_name="ismaily_madrid_decoded.csv",
             mime="text/csv",
         )
     else:
-        st.error("لم يتم العثور على بيانات. تأكد من رفع ملف السيف الصحيح.")
-                
+        st.error("لم نجد بيانات مطابقة. تأكد من رفع الملف الصحيح.")
+        
